@@ -1,0 +1,12 @@
+MCP Memory: MongoDB graph persistence and semantic retrieval
+Copyright 2026 Hector Maldonado
+
+Forked from modelcontextprotocol/servers, src/memory.
+Original knowledge graph memory implementation: Anthropic, PBC and MCP contributors.
+Current upstream: Model Context Protocol a Series of LF Projects, LLC.
+The complete upstream licensing notice is preserved in LICENSE. New implementation
+code in this fork is licensed under Apache-2.0. The retained upstream documentation
+is attributed in docs/upstream.json and remains under its original terms.
+
+No private framework implementation, configuration, credentials or user memory is
+included in this package. This independent project is not an official MCP server.

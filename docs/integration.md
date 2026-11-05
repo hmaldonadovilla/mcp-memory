@@ -1,0 +1,15 @@
+# Framework integration contract
+
+This contract explains how a governed agent framework can adopt the standalone package without transferring orchestration or authentication ownership to it. The package is independently usable; framework runtime wiring is a subsequent change.
+
+The orchestrator decides when memory is retrieved or written. It resolves an approved tool/version, authenticates the actor, chooses an authorized namespace/server binding and persists the real tool-call lifecycle. The tools runtime invokes MCP through its normal client, under that binding. The agent proposes allowed operations; it cannot choose a database, provider, token or namespace.
+
+For initial retrieval, a blank configured query should use `lookup_subject` with an exact authenticated subject association. A nonblank reviewed query should use `semantic_search` with bounded `topK`/`minScore`. A successful empty result is distinct from `embedding_unavailable`, `reindex_required`, `write_conflict` or `write_outcome_unknown`. The framework must retain those actual outcomes and must not replace failure with invented memory or unmatched tool history.
+
+An Insights writer can use the six mutation tools with approved source identifiers and optional validity. Its source/background conversation provenance belongs in the framework's durable records; source strings inside memory are claimed evidence, not an authorization mechanism. A retrieval-only deployment sets `MEMORY_READ_ONLY=true` and uses a separate credential/listener. Both may bind to the same approved MongoDB namespace with different tool permissions.
+
+Namespaces represent authorization realms, not model-provided labels. The ready-made HTTP CLI uses one fixed realm per server credential. A multi-user gateway must derive realm selection from verified identity and expose appropriately isolated server instances/factories. Do not place every user's data in one shared realm and treat a model's `subject` argument as an ACL. The current server never trusts a forwarded namespace header or an `agent_id` argument.
+
+Persist selected evidence with the trusted MCP binding, namespace/scope, fact/version reference, graph revision, score semantics and embedding-profile fingerprint. Namespace-local references alone do not identify a record globally. Retrieval results stay tool content; they are not promoted into developer instructions. Recheck access/validity at framework application time. Compression remains a separate context projection and must not delete source history or private reasoning continuity.
+
+In Kubernetes, deploy the Streamable HTTP process independently, terminate TLS at an approved boundary and mount database/embedding credentials and CA bundles from Vault. Keep explicit Helm templates/target values in platform-config. The tools runtime's existing MCP v1 client has been tested against this server's compatibility path; the CLI itself requires Node 24.19+, so a stdio host must select that runtime. There is no direct orchestrator-to-agent API connection introduced by this package.
