@@ -1,82 +1,75 @@
 {
-  "name": "@modelcontextprotocol/servers",
-  "private": true,
-  "version": "0.6.2",
-  "description": "Model Context Protocol servers",
+  "name": "@hmaldonadovilla/mcp-memory",
+  "version": "0.1.0",
+  "description": "Durable MongoDB knowledge graph and semantic retrieval over MCP stdio and Streamable HTTP",
   "license": "SEE LICENSE IN LICENSE",
-  "author": "Model Context Protocol a Series of LF Projects, LLC.",
-  "homepage": "https://modelcontextprotocol.io",
-  "bugs": "https://github.com/modelcontextprotocol/servers/issues",
+  "author": "Hector Maldonado",
   "type": "module",
-  "workspaces": [
-    "src/*"
+  "engines": {
+    "node": ">=24.19.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hmaldonadovilla/mcp-memory.git"
+  },
+  "homepage": "https://github.com/hmaldonadovilla/mcp-memory#readme",
+  "bugs": {
+    "url": "https://github.com/hmaldonadovilla/mcp-memory/issues"
+  },
+  "bin": {
+    "mcp-memory": "bin/mcp-memory.mjs"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "bin",
+    "LICENSE",
+    "NOTICE",
+    "docs/upstream.json"
   ],
-  "files": [],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
-    "build": "npm run build --workspaces",
-    "watch": "npm run watch --workspaces",
-    "publish-all": "npm publish --workspaces --access public",
-    "link-all": "npm link --workspaces",
-    "changeset": "changeset",
-    "version-packages": "changeset version && npm install --package-lock-only --ignore-scripts",
-    "verify:skills": "node scripts/verify-skills.mjs",
-    "verify:skills:cli": "node scripts/verify-skills-cli.mjs",
-    "skills:eval": "node scripts/skill-eval.mjs",
-    "test:scripts": "node --test \"scripts/**/*.test.mjs\"",
-    "validate": "npm run validate:guards && npm run validate --workspaces",
-    "validate:guards": "npm run format:check:root && npm run lint:root && npm run verify:format-coverage && npm run verify:skills && npm run verify:typecheck-coverage && npm run verify:dep-lockstep && npm run verify:no-test-retries && npm run verify:action-pins && npm run test:scripts",
-    "format": "npm run format:root && npm run format --workspaces",
-    "format:root": "prettier --write \"scripts/**/*.{ts,mts,cts,js,mjs,cjs}\" \"*.{ts,mts,cts,js,mjs,cjs}\" --ignore-path .prettierignore",
-    "format:check": "npm run format:check:root && npm run format:check --workspaces",
-    "format:check:root": "prettier --check \"scripts/**/*.{ts,mts,cts,js,mjs,cjs}\" \"*.{ts,mts,cts,js,mjs,cjs}\" --ignore-path .prettierignore",
-    "lint": "npm run lint:root && npm run lint --workspaces",
-    "lint:root": "eslint scripts \"*.{js,mjs,cjs}\" --max-warnings 0",
-    "test": "npm run test --workspaces",
-    "coverage": "npm run coverage --workspaces",
-    "verify:format-coverage": "node scripts/verify-format-coverage.mjs",
-    "verify:typecheck-coverage": "node scripts/verify-typecheck-coverage.mjs",
-    "verify:dep-lockstep": "node scripts/verify-dep-lockstep.mjs",
-    "validate:py": "node scripts/validate-py.mjs",
-    "coverage:py": "node scripts/coverage-py.mjs",
-    "verify:install-fresh": "node scripts/verify-install-fresh.mjs",
-    "verify:no-test-retries": "node scripts/verify-no-test-retries.mjs",
-    "verify:action-pins": "node scripts/verify-action-pins.mjs",
-    "verify:dco": "node scripts/verify-dco.mjs",
-    "smoke": "node scripts/smoke-servers.mjs",
-    "interface-diff": "node scripts/interface-diff.mjs",
-    "pack:verify": "node scripts/pack-and-verify.mjs",
-    "release:notes": "node scripts/release-notes.mjs",
-    "local:gate": "node scripts/gate-lease.mjs npm run local:gate:stages",
-    "local:gate:stages": "npm run verify:install-fresh && npm run verify:dco && npm run validate && npm run coverage && npm run validate:py && npm run coverage:py && npm run verify:skills:cli && npm run smoke && npm run interface-diff"
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.test.json --noEmit",
+    "format": "prettier . --write",
+    "format:check": "prettier . --check",
+    "lint": "eslint . --max-warnings 0",
+    "test": "vitest run",
+    "coverage": "vitest run --coverage",
+    "test:integration": "npm run build && node scripts/with-mongodb.mjs npx --no-install vitest run --config vitest.integration.config.ts",
+    "pack:verify": "npm run build && node scripts/with-mongodb.mjs node scripts/pack-verify.mjs",
+    "local:gate": "npm run format:check && npm run lint && npm run typecheck && npm run coverage && npm run build && npm run test:integration && npm run pack:verify && npm run image:verify",
+    "prepare": "npm run build",
+    "prepublishOnly": "npm run local:gate",
+    "image:verify": "node scripts/image-verify.mjs"
   },
   "dependencies": {
-    "@modelcontextprotocol/server-everything": "*",
-    "@modelcontextprotocol/server-filesystem": "*",
-    "@modelcontextprotocol/server-memory": "*",
-    "@modelcontextprotocol/server-sequential-thinking": "*"
+    "@modelcontextprotocol/server": "2.4.0",
+    "@modelcontextprotocol/node": "2.1.2",
+    "mongodb": "7.7.0",
+    "undici": "7.30.1",
+    "zod": "4.6.7"
   },
   "devDependencies": {
-    "@changesets/changelog-github": "1.0.1",
-    "@changesets/cli": "^3.0.3",
-    "@eslint/js": "^10.0.1",
-    "@modelcontextprotocol/client": "^2.3.1",
-    "eslint": "^10.11.0",
-    "globals": "^17.12.0",
-    "mcp-server-diff": "3.0.0",
-    "prettier": "3.8.4",
-    "proper-lockfile": "^4.1.2",
-    "semver": "^7.8.4",
-    "typescript-eslint": "^8.71.0",
-    "yaml": "^2.9.0"
+    "@modelcontextprotocol/client": "2.4.0",
+    "@mcp-v1/sdk": "npm:@modelcontextprotocol/sdk@1.32.2",
+    "@types/node": "24.10.0",
+    "@vitest/coverage-v8": "4.1.12",
+    "@eslint/js": "9.39.5",
+    "eslint": "9.39.5",
+    "typescript-eslint": "8.72.0",
+    "prettier": "3.9.10",
+    "typescript": "5.9.3",
+    "vitest": "4.1.12"
   },
   "overrides": {
-    "qs": ">=6.16.1",
-    "hono": ">=4.13.7",
-    "proxy-addr": "^2.0.8",
-    "ip-address": "^10.7.4",
-    "brace-expansion": "^5.0.12",
-    "fast-uri": "^3.1.9",
-    "nanoid": "^3.3.18",
-    "source-map-js": "^1.2.2"
+    "minimatch": "11.0.1"
   }
 }

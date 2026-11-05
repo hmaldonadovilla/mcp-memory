@@ -1,0 +1,6 @@
+{
+  "repository": "https://github.com/modelcontextprotocol/servers",
+  "commit": "36380287ed3b15d115b55f546617d723072b1296",
+  "component": "src/memory",
+  "adaptation": "Standalone MongoDB semantic graph server; upstream history, license and attribution retained. No private implementation source imported."
+}

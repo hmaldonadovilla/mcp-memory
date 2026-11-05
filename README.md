@@ -1,187 +1,163 @@
-# Model Context Protocol servers
+# MCP Memory
 
-This repository is a collection of *reference implementations* for the [Model Context Protocol](https://modelcontextprotocol.io/) (MCP), as well as references to community-built servers and additional resources.
+A standalone fork of the MCP knowledge-graph memory server with durable MongoDB persistence and observation-level semantic retrieval. It serves the same graph through **stdio/npx** and **Streamable HTTP**, using the official SDK for current (2026-07-28) and 2025-era MCP clients.
 
-> [!IMPORTANT]
-> If you are looking for a list of MCP servers, you can browse published servers on [the MCP Registry](https://registry.modelcontextprotocol.io/). The repository served by this README is dedicated to housing just the small number of reference servers maintained by the MCP steering group.
+This is an independent project. Upstream history, attribution and the complete license are retained; see [provenance](docs/upstream.json) and [design](docs/design.md). New implementation code is Apache-2.0 under the terms in [LICENSE](LICENSE).
 
-> [!WARNING]
-> The servers in this repository are intended as **reference implementations** to demonstrate MCP features and SDK usage. They are meant to serve as educational examples for developers building their own MCP servers, not as production-ready solutions. Developers should evaluate their own security requirements and implement appropriate safeguards based on their specific threat model and use case.
+## Run
 
-The servers in this repository showcase the versatility and extensibility of MCP, demonstrating how it can be used to give Large Language Models (LLMs) secure, controlled access to tools and data sources.
-Typically, each MCP server is implemented with an MCP SDK:
+Requires Node **24.19+**, Git for GitHub-source installation, and MongoDB **8+**. MongoDB is the system of record; unavailable persistence prevents startup. There is no in-memory production fallback. A graph-only server needs no embedding key.
 
-- [C# MCP SDK](https://github.com/modelcontextprotocol/csharp-sdk)
-- [Go MCP SDK](https://github.com/modelcontextprotocol/go-sdk)
-- [Java MCP SDK](https://github.com/modelcontextprotocol/java-sdk)
-- [Kotlin MCP SDK](https://github.com/modelcontextprotocol/kotlin-sdk)
-- [PHP MCP SDK](https://github.com/modelcontextprotocol/php-sdk)
-- [Python MCP SDK](https://github.com/modelcontextprotocol/python-sdk)
-- [Ruby MCP SDK](https://github.com/modelcontextprotocol/ruby-sdk)
-- [Rust MCP SDK](https://github.com/modelcontextprotocol/rust-sdk)
-- [Swift MCP SDK](https://github.com/modelcontextprotocol/swift-sdk)
-- [TypeScript MCP SDK](https://github.com/modelcontextprotocol/typescript-sdk)
+Install directly from the public GitHub source with npm/npx:
 
-## 🌟 Reference Servers
-
-These servers aim to demonstrate MCP features and the official SDKs.
-
-- **[Everything](src/everything)** - Reference / test server with prompts, resources, and tools.
-- **[Fetch](src/fetch)** - Web content fetching and conversion for efficient LLM usage.
-- **[Filesystem](src/filesystem)** - Secure file operations with configurable access controls.
-- **[Git](src/git)** - Tools to read, search, and manipulate Git repositories.
-- **[Memory](src/memory)** - Knowledge graph-based persistent memory system.
-- **[Sequential Thinking](src/sequentialthinking)** - Dynamic and reflective problem-solving through thought sequences.
-- **[Time](src/time)** - Time and timezone conversion capabilities.
-
-### Archived
-
-The following reference servers are now archived and can be found at [servers-archived](https://github.com/modelcontextprotocol/servers-archived).
-
-- **[AWS KB Retrieval](https://github.com/modelcontextprotocol/servers-archived/tree/main/src/aws-kb-retrieval-server)** - Retrieval from AWS Knowledge Base using Bedrock Agent Runtime.
-- **[Brave Search](https://github.com/modelcontextprotocol/servers-archived/tree/main/src/brave-search)** - Web and local search using Brave's Search API. Has been replaced by the [official server](https://github.com/brave/brave-search-mcp-server) ([`@brave/brave-search-mcp-server`](https://www.npmjs.com/package/@brave/brave-search-mcp-server)).
-- **[EverArt](https://github.com/modelcontextprotocol/servers-archived/tree/main/src/everart)** - AI image generation using various models.
-- **[GitHub](https://github.com/modelcontextprotocol/servers-archived/tree/main/src/github)** - Repository management, file operations, and GitHub API integration.
-- **[GitLab](https://github.com/modelcontextprotocol/servers-archived/tree/main/src/gitlab)** - GitLab API, enabling project management.
-- **[Google Drive](https://github.com/modelcontextprotocol/servers-archived/tree/main/src/gdrive)** - File access and search capabilities for Google Drive.
-- **[Google Maps](https://github.com/modelcontextprotocol/servers-archived/tree/main/src/google-maps)** - Location services, directions, and place details.
-- **[PostgreSQL](https://github.com/modelcontextprotocol/servers-archived/tree/main/src/postgres)** - Read-only database access with schema inspection.
-- **[Puppeteer](https://github.com/modelcontextprotocol/servers-archived/tree/main/src/puppeteer)** - Browser automation and web scraping.
-- **[Redis](https://github.com/modelcontextprotocol/servers-archived/tree/main/src/redis)** - Interact with Redis key-value stores.
-- **[Sentry](https://github.com/modelcontextprotocol/servers-archived/tree/main/src/sentry)** - Retrieving and analyzing issues from Sentry.io.
-- **[Slack](https://github.com/modelcontextprotocol/servers-archived/tree/main/src/slack)** - Channel management and messaging capabilities. Now maintained by [Zencoder](https://github.com/zencoderai/slack-mcp-server)
-- **[SQLite](https://github.com/modelcontextprotocol/servers-archived/tree/main/src/sqlite)** - Database interaction and business intelligence capabilities.
-
-## 🚀 Getting Started
-
-### Using MCP Servers in this Repository
-TypeScript-based servers in this repository can be started with `npx`.
-
-For example, this will start the [Memory](src/memory) server:
 ```sh
-npx -y @modelcontextprotocol/server-memory
+npx --yes --package=git+https://github.com/hmaldonadovilla/mcp-memory.git mcp-memory --help
 ```
 
-Python-based servers in this repository can be started with [`uvx`](https://docs.astral.sh/uv/concepts/tools/) or [`pip`](https://pypi.org/project/pip/). `uvx` is recommended for ease of use and setup.
+For repeatable installations, pin a release tag or commit after `#` in the Git URL. The npm registry package name is `@hmaldonadovilla/mcp-memory`; registry publication is a separate release action. A verified `.tgz` can also be installed with `npm install /path/to/package.tgz`, then run with `npx --no-install mcp-memory`.
 
-For example, this will start the [Git](src/git) server:
+Configure MongoDB and a server-controlled authorization namespace, then start stdio:
+
 ```sh
-# With uvx
-uvx mcp-server-git
-
-# With pip
-pip install mcp-server-git
-python -m mcp_server_git
+export MEMORY_MONGODB_URI_FILE=/run/secrets/mongodb-uri
+export MEMORY_DATABASE=mcp_memory
+export MEMORY_NAMESPACE=personal-memory
+npx --yes --package=git+https://github.com/hmaldonadovilla/mcp-memory.git mcp-memory
 ```
 
-Follow [these](https://docs.astral.sh/uv/getting-started/installation/) instructions to install `uv` / `uvx` and [these](https://pip.pypa.io/en/stable/installation/) to install `pip`.
-
-### Using an MCP Client
-However, running a server on its own isn't very useful, and should instead be configured into an MCP client. For example, here's the Claude Desktop configuration to use the above server:
+An MCP client configuration uses the same command:
 
 ```json
 {
   "mcpServers": {
     "memory": {
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-memory"]
+      "args": [
+        "--yes",
+        "--package=git+https://github.com/hmaldonadovilla/mcp-memory.git",
+        "mcp-memory"
+      ],
+      "env": {
+        "MEMORY_MONGODB_URI_FILE": "/run/secrets/mongodb-uri",
+        "MEMORY_NAMESPACE": "personal-memory"
+      }
     }
   }
 }
 ```
 
-On Windows, wrap `npx` with `cmd /c`:
-
-```json
-{
-  "mcpServers": {
-    "memory": {
-      "command": "cmd",
-      "args": ["/c", "npx", "-y", "@modelcontextprotocol/server-memory"]
-    }
-  }
-}
-```
-
-Additional examples of using the Claude Desktop as an MCP client might look like:
-
-```json
-{
-  "mcpServers": {
-    "filesystem": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/allowed/files"]
-    },
-    "git": {
-      "command": "uvx",
-      "args": ["mcp-server-git", "--repository", "path/to/git/repo"]
-    },
-    "fetch": {
-      "command": "uvx",
-      "args": ["mcp-server-fetch"]
-    }
-  }
-}
-```
-
-On Windows, apply the same wrapper to the `npx`-based `filesystem` entry above by changing its `"command"` to `"cmd"` and prepending `"/c", "npx"` to its existing `args`. Leave the `uvx` entries unchanged.
-
-### Transports: stdio and Streamable HTTP
-
-An MCP server talks to its client over a **transport**. The protocol defines two standard ones, and they run very differently:
-
-| Transport | How the server runs | How a client reaches it |
-|---|---|---|
-| **stdio** | The client launches the server as a subprocess and talks to it over the process's stdin and stdout. The server opens no port. | A `command` and `args` in the client's configuration, as in the examples above |
-| **Streamable HTTP** | The server runs on its own as an HTTP service, and can serve many clients | A URL, such as `http://localhost:3001/mcp` |
-
-**Every server in this repository serves stdio, and only [Everything](src/everything) also serves Streamable HTTP** (its README shows how to start it that way, and covers its deprecated HTTP+SSE transport too). So when you run `uvx mcp-server-git` or `npx -y @modelcontextprotocol/server-memory` in a terminal, it opens no port, prints at most a one-line startup notice, and then appears to hang. That is expected: it is waiting for a client to send it messages on stdin. You do not normally start a stdio server yourself; your MCP client starts it from its configuration and stops it when it is done.
-
-To try a server without setting up a client, use the [MCP Inspector](https://github.com/modelcontextprotocol/inspector). Given a stdio server's command, it launches the server for you and lets you browse and call its tools; given a URL, it connects to a running Streamable HTTP server:
+### Streamable HTTP
 
 ```sh
-# A stdio server: the Inspector launches it
-npx @modelcontextprotocol/inspector uvx mcp-server-git
-
-# A Streamable HTTP server: start it first, then connect to its URL
-npx @modelcontextprotocol/server-everything streamableHttp
-npx @modelcontextprotocol/inspector --transport http --server-url http://localhost:3001/mcp
+export MEMORY_HTTP_TOKEN_FILE=/run/secrets/memory-http-token
+export MEMORY_HOST=127.0.0.1
+export MEMORY_PORT=3001
+npx --yes --package=git+https://github.com/hmaldonadovilla/mcp-memory.git mcp-memory --transport http
 ```
 
-For more, see the [transport layer](https://modelcontextprotocol.io/docs/learn/architecture#transport-layer) in the MCP architecture overview, and [Transports](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports) in the specification.
+Connect an MCP client to `http://127.0.0.1:3001/mcp` with `Authorization: Bearer <token>`. The token file must contain an opaque credential of at least 32 characters. Every MCP request is authenticated, including discovery. The namespace is fixed by server configuration; every holder of that server credential has access to that authorization realm. Use separate namespaces/credentials/listeners for separate realms, or build a trusted identity adapter using the public server/store factories. This release does not implement OAuth or infer authorization from model arguments, a session ID or forwarded headers.
 
-## 🛠️ Creating Your Own Server
+The listener is loopback by default. Binding another interface requires an explicit `MEMORY_ALLOWED_HOSTS` list. For a TLS reverse proxy, configure its exact host (including port when present) and approved origins. Unapproved Host and Origin headers are rejected before dispatch. This is a server-to-server endpoint; browser CORS access is not enabled. `/healthz` reports persistence availability without returning memory. GET/DELETE session operations on `/mcp` return 405: the current protocol is sessionless and older clients use stateless compatibility. Deprecated HTTP+SSE is not implemented.
 
-Interested in creating your own MCP server? Visit the official documentation at [modelcontextprotocol.io](https://modelcontextprotocol.io/introduction) for comprehensive guides, best practices, and technical details on implementing MCP servers.
+### Container
 
-## 📚 Learn More
+`docker build -t mcp-memory:0.1.0 .` builds the same executable with production dependencies and an unprivileged user. To supply a corporate CA during dependency installation, add `--secret id=ca_bundle,src=/path/to/trusted-ca-bundle.pem`; the build secret is not copied into the image. At runtime, mount credentials/CAs read-only under `/run/secrets`, make them readable by the container user, and set the same environment references. A container HTTP listener needs `MEMORY_HOST=0.0.0.0` and explicit `MEMORY_ALLOWED_HOSTS`; publish its port only on the intended interface.
 
-See [ADDITIONAL.md](ADDITIONAL.md) for a curated list of frameworks and resources that simplify building MCP servers and clients.
+## Semantic retrieval
 
-## 🤝 Contributing
+Graph operations and literal `search_nodes` work without a provider. `semantic_search` is explicit and requires a real OpenAI-compatible **embeddings** endpoint. For Azure Foundry v1:
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for information about contributing to this repository.
+```sh
+export MEMORY_EMBEDDING_BASE_URL=https://your-resource.services.ai.azure.com/openai/v1
+export MEMORY_EMBEDDING_MODEL=your-embedding-deployment
+export MEMORY_EMBEDDING_PROFILE=your-reviewed-embedding-profile-v1
+export MEMORY_EMBEDDING_DIMENSIONS=1536
+export MEMORY_EMBEDDING_API_KEY_FILE=/run/secrets/embedding-api-key
+```
 
-## 📦 Releasing
+Use the configured provider's actual embedding model and dimensions. A local OpenAI-compatible embeddings service uses the same interface. Completion/Responses model deployments are not embedding models. Keys and endpoint selection are operator configuration, never tool arguments. `MEMORY_EMBEDDING_AUTH_HEADER` selects `bearer` (default) or `api-key`; an explicitly configured private service may omit a key. `dimensions` is sent only with `MEMORY_EMBEDDING_SEND_DIMENSIONS=true`, for providers that support dimension reduction. Returned dimensions, indices, finite values and nonzero norms are always validated.
 
-See [RELEASING.md](RELEASING.md) for how packages are published (OIDC trusted publishing from CI — no registry tokens) and how to retry a failed publish.
+Each unique observation retains its own normalized vector, immutable fact identifier, timestamp and optional source provenance. Search returns bounded ranked evidence with cosine scores, fact/version references and the selected entities/relations. A score measures similarity, not truth. Expired observations are excluded from retrieval. Public graph/tool responses never include stored vectors or provider credentials.
 
-## 🔒 Security
+Missing credentials, provider errors, timeouts and incompatible profiles are explicit errors. No fake embeddings, lexical fallback, provider retry or hidden model selection occurs. Graph mutations do not settle until the corresponding vectors are ready. A failed provider call leaves stored graph state unchanged.
 
-See [SECURITY.md](SECURITY.md) for reporting security vulnerabilities.
+### Existing facts and profile changes
 
-## 📜 License
+Enabling semantic retrieval over existing literal facts, or changing endpoint/model/profile/dimensions, requires a deliberate reindex:
 
-This project is licensed under the Apache License, Version 2.0 for new contributions, with existing code under MIT - see the [LICENSE](LICENSE) file for details.
+```sh
+npx --yes --package=git+https://github.com/hmaldonadovilla/mcp-memory.git mcp-memory --reindex --max-facts 64
+```
 
-## 💬 Community
+This is an operator command, not an agent tool. It embeds all stored facts within the explicit allowance (1–10,000, default 64), in batches of at most 64. The old graph/index remains intact until the complete new snapshot commits atomically. Concurrent writes produce a conflict; read current state before retrying. A read-only deployment cannot reindex. Stored profiles include an endpoint/model/dimension fingerprint in addition to the operator's immutable profile identifier.
 
-- [GitHub Discussions](https://github.com/orgs/modelcontextprotocol/discussions)
+## Tools
 
-## ⭐ Support
+| Tool                  | Behavior                                                                                                                                                  |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `create_entities`     | Create new names with unique observations; ignore existing entities. Optional `subjects` and `source` attach subject associations and claimed provenance. |
+| `create_relations`    | Create unique directed edges; both endpoints must exist.                                                                                                  |
+| `add_observations`    | Add unique facts to existing entities; missing targets fail the whole operation.                                                                          |
+| `delete_entities`     | Atomically delete nodes, vectors and incident edges.                                                                                                      |
+| `delete_observations` | Atomically remove exact facts and their vectors.                                                                                                          |
+| `delete_relations`    | Remove matching directed edges.                                                                                                                           |
+| `read_graph`          | Read the authorized namespace's bounded current graph.                                                                                                    |
+| `open_nodes`          | Read named nodes and edges between selected nodes.                                                                                                        |
+| `search_nodes`        | Upstream-compatible literal search; optional entity `limit` (1–50).                                                                                       |
+| `lookup_subject`      | Exact `subject` association lookup, without embedding a subject ID; optional `limit`.                                                                     |
+| `semantic_search`     | Real embedding retrieval with `query`, `topK` (1–50) and `minScore` (cosine −1 through 1).                                                                |
 
-If you find MCP servers useful, please consider starring the repository and contributing new servers or improvements!
+The `memory://knowledge-graph` resource exposes the same bounded public graph. Resource subscriptions are not advertised. `MEMORY_READ_ONLY=true` exposes only the five retrieval tools and the resource. All inputs are strict schemas; namespace, database, provider and credentials cannot be overridden through arguments. See [the framework integration contract](docs/integration.md).
 
----
+Example entity:
 
-Managed by Anthropic, but built together with the community. The Model Context Protocol is open source and we encourage everyone to contribute their own servers and improvements!
+```json
+{
+  "name": "editor-preference",
+  "entityType": "preference",
+  "subjects": ["user-123"],
+  "observations": ["Prefers concise code-review explanations"],
+  "source": {
+    "source": "conversation",
+    "sourceId": "turn-42",
+    "validUntil": "2027-01-01T00:00:00Z"
+  }
+}
+```
+
+Source metadata is claimed provenance, not independent verification. Transport authorization governs access to the whole namespace; `subjects` is a retrieval association, not an access-control list.
+
+## Configuration and certificate trust
+
+| Setting                                          | Default / purpose                                                                                        |
+| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
+| `MEMORY_MONGODB_URI_FILE` / `MEMORY_MONGODB_URI` | Prefer a mounted secret file; default is credential-free `mongodb://127.0.0.1:27017`. Set one form only. |
+| `MEMORY_DATABASE` / `MEMORY_NAMESPACE`           | `mcp_memory` / `default`; fixed by operator.                                                             |
+| `MEMORY_MONGODB_CA_FILE`                         | Mounted database CA bundle; also enables TLS.                                                            |
+| `MEMORY_EMBEDDING_CA_FILE`                       | Additional embedding CA bundle, appended to Node's default trust roots.                                  |
+| `MEMORY_HTTP_TOKEN_FILE` / `MEMORY_HTTP_TOKEN`   | Required for HTTP; prefer a mounted secret.                                                              |
+| `MEMORY_HOST` / `MEMORY_PORT`                    | `127.0.0.1` / `3001`.                                                                                    |
+| `MEMORY_ALLOWED_HOSTS`                           | Exact comma-separated host:port values for non-loopback/proxy deployments.                               |
+| `MEMORY_ALLOWED_ORIGINS`                         | Exact comma-separated scheme/host/port origins; otherwise loopback listener origins only. No wildcard.   |
+| `MEMORY_READ_ONLY`                               | `false`; only `true` or `false`.                                                                         |
+
+Corporate laptops can use Node's system-CA option (`NODE_USE_SYSTEM_CA=1`) or `NODE_EXTRA_CA_CERTS` at process startup. Explicit mounted CA bundles remain useful in WSL and containers whose trust stores differ from the host. Keep the full required chain in the database CA bundle. Certificate and hostname verification stay enabled; `NODE_TLS_REJECT_UNAUTHORIZED=0` and MongoDB verification-bypass options are rejected. No corporate certificate is distributed in the repository or package.
+
+## Limits and storage model
+
+This first release deliberately uses **bounded exact cosine retrieval**, with no Cosmos-specific aggregation or assumed Atlas/on-premises ANN index. MongoDB stores one atomic versioned graph document per namespace in `memory_graphs`. Graph changes, relations and vectors commit together through a revision compare-and-swap. Conflicts are explicit; unconfirmed writes return an unknown-outcome error and must be reconciled by reading current state before retry.
+
+The graph is limited to 14 MiB BSON, 1,000 entities, 5,000 relations and 200 observations per entity. Each normal mutation may introduce at most 64 facts. Embedding inputs are at most 8,192 UTF-8 bytes each, with a 30-second request timeout and a 16 MiB provider-response allowance. Provider token limits still apply. HTTP bodies are limited to 1 MiB and tool/resource results to 256 KiB. Oversized results fail explicitly; use narrower retrieval. Facts are never silently truncated. This is a scoped memory graph, not a large knowledge warehouse. An independently qualified per-record/indexed backend is a future extension behind the store boundary.
+
+## Develop and verify
+
+```sh
+npm ci
+npm run local:gate
+```
+
+The gate runs formatting, lint, strict types, unit/protocol tests with independent 90% coverage floors, the build, real MongoDB integration and installation/npx smoke from the exact tarball, plus a production-only container entry-point/user check. Docker supplies a disposable loopback-only MongoDB 8.0.26 container; it is removed after each command. An explicit credential-free `MEMORY_TEST_MONGODB_URI=mongodb://127.0.0.1:PORT` can point to an owned local test instance. Tests only write their isolated `mcp_memory_tests` namespaces. Embeddings and certificates are local synthetic fixtures; tests need no provider account or paid calls. Node 24 and 26 run in CI.
+
+See [release instructions](RELEASING.md). Framework Insights/compression, deployment infrastructure, OAuth, native ANN indexes and large-scale/load qualification are outside this release.
+
+MongoDB also requires a compatible host kernel, including when run in Docker. The current 6.19–7.0.13 incompatibility and supported alternatives are documented in the [MongoDB production notes](https://www.mongodb.com/docs/v8.0/administration/production-notes/). CI uses Ubuntu 22.04 to retain real MongoDB checks on a supported kernel; the test runner never bypasses MongoDB's startup guard.
