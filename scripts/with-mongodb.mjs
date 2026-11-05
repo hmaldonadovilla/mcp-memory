@@ -42,6 +42,7 @@ try {
       "Tests require an explicit credential-free loopback test MongoDB URI",
     );
   let ready = false;
+  let failure = "unknown";
   for (let attempt = 0; attempt < 40; attempt++) {
     const client = new MongoClient(uri, { serverSelectionTimeoutMS: 500 });
     try {
@@ -49,14 +50,37 @@ try {
       await client.db("mcp_memory_tests").command({ ping: 1 });
       ready = true;
       break;
-    } catch {
+    } catch (error) {
+      failure = error instanceof Error ? error.name : "unknown";
       await delay(250);
     } finally {
       await client.close();
     }
   }
-  if (!ready)
+  if (!ready) {
+    console.error("Isolated MongoDB readiness failed:", failure);
+    if (container) {
+      // This owned fixture contains no credentials or non-synthetic data.
+      for (const args of [
+        ["info", "--format", "{{.KernelVersion}}"],
+        ["logs", "--tail", "12", container],
+      ]) {
+        try {
+          console.error(
+            execFileSync("docker", args, {
+              encoding: "utf8",
+              stdio: ["ignore", "pipe", "pipe"],
+            }).slice(-8000),
+          );
+        } catch {
+          console.error(
+            "The owned fixture exited before diagnostics could be read.",
+          );
+        }
+      }
+    }
     throw new Error("The isolated integration database did not become ready");
+  }
   const child = spawn(command[0], command.slice(1), {
     stdio: "inherit",
     env: { ...process.env, MEMORY_TEST_MONGODB_URI: uri },
