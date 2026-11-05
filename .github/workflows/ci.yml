@@ -9,7 +9,8 @@ permissions:
 jobs:
   verify:
     name: Verify Node ${{ matrix.node }}
-    runs-on: ubuntu-latest
+    # Current Ubuntu 24.04 runners use a 7.0.0 kernel rejected by MongoDB 8's startup guard.
+    runs-on: ubuntu-22.04
     timeout-minutes: 15
     strategy:
       fail-fast: false

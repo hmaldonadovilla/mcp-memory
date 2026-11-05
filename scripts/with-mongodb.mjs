@@ -97,5 +97,7 @@ try {
   process.exitCode = code;
 } finally {
   if (container)
-    execFileSync("docker", ["rm", "--force", container], { stdio: "ignore" });
+    execFileSync("docker", ["rm", "--force", "--volumes", container], {
+      stdio: "ignore",
+    });
 }
