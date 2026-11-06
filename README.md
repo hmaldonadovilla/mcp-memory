@@ -61,7 +61,7 @@ The listener is loopback by default. Binding another interface requires an expli
 
 ### Container
 
-`docker build -t mcp-memory:0.2.0 .` builds the same executable with production dependencies and an unprivileged user. To supply a corporate CA during dependency installation, add `--secret id=ca_bundle,src=/path/to/trusted-ca-bundle.pem`; the build secret is not copied into the image. At runtime, mount credentials/CAs read-only under `/run/secrets`, make them readable by the container user, and set the same environment references. A container HTTP listener needs `MEMORY_HOST=0.0.0.0` and explicit `MEMORY_ALLOWED_HOSTS`; publish its port only on the intended interface.
+`docker build -t mcp-memory:0.3.0 .` builds the same executable with production dependencies and an unprivileged user. To supply a corporate CA during dependency installation, add `--secret id=ca_bundle,src=/path/to/trusted-ca-bundle.pem`; the build secret is not copied into the image. At runtime, mount credentials/CAs read-only under `/run/secrets`, make them readable by the container user, and set the same environment references. A container HTTP listener needs `MEMORY_HOST=0.0.0.0` and explicit `MEMORY_ALLOWED_HOSTS`; publish its port only on the intended interface.
 
 ## Semantic retrieval
 
@@ -73,7 +73,7 @@ export MEMORY_EMBEDDING_MODEL=your-embedding-deployment
 export MEMORY_EMBEDDING_PROFILE=your-reviewed-embedding-profile-v1
 export MEMORY_EMBEDDING_DIMENSIONS=1536
 export MEMORY_EMBEDDING_API_KEY_FILE=/run/secrets/embedding-api-key
-export MEMORY_VECTOR_INDEX=memory_semantic_v2
+export MEMORY_VECTOR_INDEX=memory_semantic_v3
 # MongoDB Community uses its native command for scoped index discovery.
 export MEMORY_VECTOR_INDEX_INTERFACE=command
 ```
@@ -92,7 +92,7 @@ Semantic retrieval requires a native MongoDB Vector Search deployment: Atlas wit
 npx --yes @hmaldonadovilla/mcp-memory --prepare-index
 ```
 
-The command creates a missing index, waits for READY, and rejects dimension, metric or filter drift. The serving credential needs find/insert/update on `memory_graphs` and find/insert/update/remove/listSearchIndexes on `memory_vectors`, rather than index-management permissions.
+The command creates a missing index, waits for READY, and rejects dimension, metric or filter drift. The serving credential needs find/insert/update on `memory_graphs`, find/insert/update/remove/listSearchIndexes on `memory_index`, and read-only access to its team directory. Index provisioning stays operator-only.
 
 Enabling semantic retrieval over existing literal or 0.1.0 facts, or changing endpoint/model/profile/dimensions, requires a deliberate reindex:
 
@@ -102,23 +102,50 @@ npx --yes --package=git+https://github.com/hmaldonadovilla/mcp-memory.git mcp-me
 
 This is an operator command, not an agent tool. It embeds all stored facts within the explicit allowance (1–10,000, default 64), plus at most 1,000 entity headers, in batches of at most 64. The old graph/index remains intact until the complete new snapshot commits atomically. Concurrent writes produce a conflict; read current state before retrying. A read-only deployment cannot reindex. Stored profiles include an endpoint/model/dimension fingerprint in addition to the operator's immutable profile identifier.
 
+## User identity and fact permissions
+
+A trusted host can bind a user to a private `0600` JSON file referenced by `MCP_SERVER_CONFIG_FILE`:
+
+```json
+{
+  "mode": "user",
+  "tenant_id": "tenant-id",
+  "user_id": "stable-framework-user-id",
+  "conversation_id": "conversation:source",
+  "task_id": "task:source",
+  "scope_ref": "approved-business-scope"
+}
+```
+
+Set `MEMORY_REQUIRE_USER_CONTEXT=true` on shared framework deployments, `MEMORY_NAMESPACE` to a stable operator-controlled realm, and `MEMORY_DIRECTORY_DATABASE` to the identity database (defaults to `MEMORY_DATABASE`). The host must derive these fields from verified authorization and scoped conversation records; never accept identity, memberships or database selection as model/tool arguments. Discovery supplies `{"mode":"discovery"}` and may list/ping tools but cannot read, write or embed a query.
+
+New facts are `user` private across the same user's conversations in the approved realm/scope. Original creator, conversation and task provenance are immutable. `team` shares a specific fact with one or more selected active teams; `global` shares within the tenant and approved realm/scope. The creator alone may change sharing using `set_memory_permissions`. Create/add results return the newly written facts' `fact_metadata.ref` values immediately. For existing facts, first retrieve their current references; stale references, foreign-owned facts and unapproved teams are rejected. Deleting/recreating a fact creates a new generation, invalidating its old references. No sharing is inferred from fact text. Models should change permissions only on an explicit user request.
+
+The operator/framework owns `memory_teams` (`_id`, `tenant_id`, `name`, `status`) and `memory_team_memberships` (`tenant_id`, `user_id`, `team_id`, `status`). The serving credential receives **read only** on both. Only active team rows and active memberships count. Users may belong to multiple independent workgroups. Current memberships are read on every operation and checked again before disclosing retrieved results. Native search applies visibility prefilters and authoritative graph filtering so stale search projections cannot restore revoked access. Foreign readers receive only shared facts; private subjects, relations, source conversation/task identifiers and unrelated team IDs are withheld.
+
+Without a required host context the standalone server remains an explicit fixed realm, suitable for a single trusted operator. Its shared HTTP bearer token authorizes that realm; it does not identify different people. Creator/team sharing requires verified user context. A multi-user gateway must authenticate callers and supply isolated user-bound stores/servers rather than treating one workload token as many users.
+
+**Upgrade from 0.1/0.2:** back up first and perform a reviewed ownership/provenance migration to `storage_version: 3` and `memory_index`. The server never guesses legacy owners, adopts unscoped graphs or automatically makes old facts global. The embedding profile can remain unchanged when existing compatible vectors are copied to the new index; remove legacy graph vectors and the old projection only after verification. `--reindex` handles embedding/profile changes after ownership is established, not ownership migration.
+
 ## Tools
 
-| Tool                  | Behavior                                                                                                                                                  |
-| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `create_entities`     | Create new names with unique observations; ignore existing entities. Optional `subjects` and `source` attach subject associations and claimed provenance. |
-| `create_relations`    | Create unique directed edges; both endpoints must exist.                                                                                                  |
-| `add_observations`    | Add unique facts to existing entities; missing targets fail the whole operation.                                                                          |
-| `delete_entities`     | Atomically delete nodes, vectors and incident edges.                                                                                                      |
-| `delete_observations` | Atomically remove exact facts and their vectors.                                                                                                          |
-| `delete_relations`    | Remove matching directed edges.                                                                                                                           |
-| `read_graph`          | Read the authorized namespace's bounded current graph.                                                                                                    |
-| `open_nodes`          | Read named nodes and edges between selected nodes.                                                                                                        |
-| `search_nodes`        | Upstream-compatible literal search; optional entity `limit` (1–50).                                                                                       |
-| `lookup_subject`      | Exact `subject` association lookup, without embedding a subject ID; optional `limit`.                                                                     |
-| `semantic_search`     | Real embedding retrieval with `query`, `topK` (1–50) and `minScore` (cosine −1 through 1).                                                                |
+| Tool                     | Behavior                                                                                                                                                  |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `create_entities`        | Create new names with unique observations; ignore existing entities. Optional `subjects` and `source` attach subject associations and claimed provenance. |
+| `create_relations`       | Create unique directed edges; both endpoints must exist.                                                                                                  |
+| `add_observations`       | Add unique facts to existing entities; missing targets fail the whole operation.                                                                          |
+| `delete_entities`        | Atomically delete nodes, vectors and incident edges.                                                                                                      |
+| `delete_observations`    | Atomically remove exact facts and their vectors.                                                                                                          |
+| `delete_relations`       | Remove matching directed edges.                                                                                                                           |
+| `read_graph`             | Read the authorized namespace's bounded current graph.                                                                                                    |
+| `open_nodes`             | Read named nodes and edges between selected nodes.                                                                                                        |
+| `search_nodes`           | Upstream-compatible literal search; optional entity `limit` (1–50).                                                                                       |
+| `lookup_subject`         | Exact `subject` association lookup, without embedding a subject ID; optional `limit`.                                                                     |
+| `list_memory_teams`      | List current active teams from the framework/operator directory.                                                                                          |
+| `set_memory_permissions` | Creator-only visibility changes using current fact references and selected teams.                                                                         |
+| `semantic_search`        | Real embedding retrieval with `query`, `topK` (1–50) and `minScore` (cosine −1 through 1).                                                                |
 
-The `memory://knowledge-graph` resource exposes the same bounded public graph. Resource subscriptions are not advertised. `MEMORY_READ_ONLY=true` exposes only the five retrieval tools and the resource. All inputs are strict schemas; namespace, database, provider and credentials cannot be overridden through arguments. See [the framework integration contract](docs/integration.md).
+The `memory://knowledge-graph` resource exposes the same bounded public graph. Resource subscriptions are not advertised. `MEMORY_READ_ONLY=true` exposes the six read-only tools (including team lookup) and the resource. All inputs are strict schemas; namespace, database, provider and credentials cannot be overridden through arguments. See [the framework integration contract](docs/integration.md).
 
 Example entity:
 
@@ -136,7 +163,7 @@ Example entity:
 }
 ```
 
-Source metadata is claimed provenance, not independent verification. Transport authorization governs access to the whole namespace; `subjects` is a retrieval association, not an access-control list.
+Source metadata is claimed provenance, not independent verification. The trusted host identity and stored fact permissions govern access; `subjects` is a private retrieval association, not an access-control list.
 
 ## Configuration and certificate trust
 
@@ -156,9 +183,9 @@ Corporate laptops can use Node's system-CA option (`NODE_USE_SYSTEM_CA=1`) or `N
 
 ## Limits and storage model
 
-**All similarity ranking runs in MongoDB through `$vectorSearch`.** The MCP embeds the query and submits a bounded native ANN query, with namespace, embedding-profile and validity prefilters. Native scores are converted to cosine scores inside the aggregation pipeline. There is no process-side distance calculation, vector scan or fallback.
+**All similarity ranking runs in MongoDB through `$vectorSearch`.** The MCP embeds the query and submits a bounded native ANN query, with tenant, realm, approved scope, owner/team/global visibility, embedding-profile and validity prefilters. Native scores are converted to cosine scores inside the aggregation pipeline. There is no process-side distance calculation, vector scan or fallback.
 
-MongoDB retains the versioned graph document in `memory_graphs` and a flat searchable projection of entity/fact vectors in `memory_vectors`. A replica-set transaction commits the graph revision and vector deltas together. Similarity search reads only metadata and bounded matches, then hydrates selected public entities/relations in MongoDB; it does not load the graph/vector snapshot into the MCP. Index synchronization is asynchronous: a just-written fact can take time to become searchable. Authoritative hydration excludes deleted or stale facts. Conflicts are explicit; unconfirmed writes require reconciliation.
+MongoDB retains authoritative fact text, provenance, permissions and relations in `memory_graphs`. It stores each entity/fact embedding exactly once in `memory_index`, with identifiers and minimal authorization metadata. Graph documents contain no vectors, and the search collection contains no duplicate fact text or source records. Ordinary mutations retain unchanged embeddings; permission changes never call the embedding provider. A replica-set transaction commits the graph revision and vector deltas together. Similarity search reads only metadata and bounded matches, then hydrates selected public entities/relations in MongoDB; it does not load the graph/vector snapshot into the MCP. Index synchronization is asynchronous: a just-written fact can take time to become searchable. Authoritative hydration excludes deleted or stale facts. Conflicts are explicit; unconfirmed writes require reconciliation.
 
 The graph is limited to 14 MiB BSON, 1,000 entities, 5,000 relations and 200 observations per entity. Each normal mutation may introduce at most 64 entity/fact vectors. Embedding inputs are at most 8,192 UTF-8 bytes each, with a 30-second request timeout and a 16 MiB provider-response allowance. Provider token limits still apply. HTTP bodies are limited to 1 MiB and tool/resource results to 256 KiB. Oversized results fail explicitly; use narrower retrieval. Facts are never silently truncated. This is a scoped memory graph, not a large knowledge warehouse. An independently qualified per-record/indexed backend is a future extension behind the store boundary.
 

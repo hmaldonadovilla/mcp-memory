@@ -151,14 +151,12 @@ logging:
   try {
     await client.connect();
     const db = client.db("mcp_memory_tests");
-    if (
-      !(await db.listCollections({ name: "memory_vectors" }).toArray()).length
-    )
-      await db.createCollection("memory_vectors");
+    if (!(await db.listCollections({ name: "memory_index" }).toArray()).length)
+      await db.createCollection("memory_index");
     let connected = false;
     for (let attempt = 0; attempt < 120; attempt++) {
       try {
-        await db.collection("memory_vectors").listSearchIndexes().toArray();
+        await db.collection("memory_index").listSearchIndexes().toArray();
         connected = true;
         break;
       } catch {
@@ -170,7 +168,7 @@ logging:
     await client.close();
   }
   await MongoGraphStore.prepare(uri, "mcp_memory_tests", {
-    name: "memory_semantic_v2",
+    name: "memory_semantic_v3",
     dimensions: 2,
   });
   const child = spawn(command[0], command.slice(1), {

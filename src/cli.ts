@@ -104,6 +104,8 @@ export async function runCli(
     config.namespace,
     config.caFile,
     config.search,
+    config.caller,
+    config.directoryDatabase,
   );
   let embeddings: OpenAICompatibleEmbeddings | undefined;
   try {

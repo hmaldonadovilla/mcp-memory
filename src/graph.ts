@@ -17,6 +17,7 @@ import type {
   Snapshot,
   Source,
 } from "./model.js";
+import type { PermissionChange } from "./access.js";
 
 export class MemoryGraph {
   constructor(
@@ -27,6 +28,7 @@ export class MemoryGraph {
   private async mutate<T>(
     operation: (state: Snapshot) => T,
     signal?: AbortSignal,
+    project?: (result: T, settled: Snapshot) => T,
   ): Promise<T> {
     const before = await this.store.load();
     const next = structuredClone(before);
@@ -58,6 +60,20 @@ export class MemoryGraph {
         "embedding_budget",
         "A mutation may introduce at most 64 entity/fact vectors; split the request into smaller batches.",
       );
+    // Default-private reference metadata adds at most 1 KiB per new fact plus its quoted observation.
+    const resultAllowance = added.reduce(
+      (bytes, item) =>
+        bytes +
+        ("content" in item.target
+          ? 1024 + Buffer.byteLength(JSON.stringify(item.target.content))
+          : 0),
+      Buffer.byteLength(JSON.stringify(result)),
+    );
+    if (project && resultAllowance > 262144)
+      throw new MemoryError(
+        "result_limit",
+        "The write result would exceed its allowance; split the mutation before persistence.",
+      );
     if (added.length && this.embeddings) {
       this.checkProfile(before);
       const vectors = await this.embeddings.embed(
@@ -86,8 +102,8 @@ export class MemoryGraph {
       );
     next.revision = before.revision + 1;
     snapshotSchema.parse(next);
-    await this.store.commit(before.revision, next, before);
-    return result;
+    const settled = await this.store.commit(before.revision, next, before);
+    return project ? bounded(project(result, settled ?? next)) : result;
   }
   private checkProfile(state: Snapshot): void {
     if (!this.embeddings)
@@ -100,31 +116,40 @@ export class MemoryGraph {
         "embedding_profile_mismatch",
         "The configured embedding profile differs from stored memory; run an explicit operator reindex or use a new namespace.",
       );
-    if (state.entities.some((e) => !e.vector || e.facts.some((f) => !f.vector)))
+    if (state.entities.length && !state.profile)
       throw new MemoryError(
         "reindex_required",
         "Existing graph facts have not been embedded; run an explicit operator reindex first.",
       );
   }
   async createEntities(entities: EntityInput[], signal?: AbortSignal) {
-    return this.mutate((state) => {
-      const created = [];
-      for (const input of entities) {
-        if (state.entities.some((e) => e.name === input.name)) continue;
-        const entity = {
-          name: input.name,
-          entityType: input.entityType,
-          subjects: [...new Set(input.subjects ?? [])],
-          revision: 1,
-          facts: [...new Set(input.observations)].map((content) =>
-            this.fact(input.name, content, input.source),
+    return this.mutate(
+      (state) => {
+        const created = [];
+        for (const input of entities) {
+          if (state.entities.some((e) => e.name === input.name)) continue;
+          const entity = {
+            name: input.name,
+            entityType: input.entityType,
+            subjects: [...new Set(input.subjects ?? [])],
+            revision: 1,
+            facts: [...new Set(input.observations)].map((content) =>
+              this.fact(input.name, content, input.source),
+            ),
+          };
+          state.entities.push(entity);
+          created.push(publicEntity(entity));
+        }
+        return created;
+      },
+      signal,
+      (created, settled) =>
+        created.map((entity) =>
+          publicEntity(
+            settled.entities.find((value) => value.name === entity.name)!,
           ),
-        };
-        state.entities.push(entity);
-        created.push(publicEntity(entity));
-      }
-      return created;
-    }, signal);
+        ),
+    );
   }
   private fact(entity: string, content: string, source?: Source): Fact {
     return {
@@ -182,9 +207,34 @@ export class MemoryGraph {
             );
             entity.revision++;
           }
-          return { entityName: entity.name, addedObservations: fresh };
+          return {
+            entityName: entity.name,
+            addedObservations: fresh,
+            fact_metadata:
+              publicEntity({
+                ...entity,
+                facts: entity.facts.filter((fact) =>
+                  fresh.includes(fact.content),
+                ),
+              }).fact_metadata ?? [],
+          };
         }),
       signal,
+      (added, settled) =>
+        added.map((addition) => ({
+          ...addition,
+          fact_metadata:
+            publicEntity({
+              ...settled.entities.find(
+                (entity) => entity.name === addition.entityName,
+              )!,
+              facts: settled.entities
+                .find((entity) => entity.name === addition.entityName)!
+                .facts.filter((fact) =>
+                  addition.addedObservations.includes(fact.content),
+                ),
+            }).fact_metadata ?? [],
+        })),
     );
   }
   async deleteEntities(names: string[], signal?: AbortSignal) {
@@ -236,14 +286,14 @@ export class MemoryGraph {
     }, signal);
   }
   async readGraph() {
-    const state = await this.store.load();
+    const state = await this.readable();
     return bounded(subgraph(state, new Set(state.entities.map((e) => e.name))));
   }
   async openNodes(names: string[]) {
-    return bounded(subgraph(await this.store.load(), new Set(names)));
+    return bounded(subgraph(await this.readable(), new Set(names)));
   }
   async searchNodes(query: string, limit = 20) {
-    const state = await this.store.load();
+    const state = await this.readable();
     const text = query.toLocaleLowerCase("en");
     const names = new Set(
       state.entities
@@ -260,7 +310,7 @@ export class MemoryGraph {
     return bounded(subgraph(state, names));
   }
   async lookupSubject(subject: string, limit = 20) {
-    const state = await this.store.load();
+    const state = await this.readable();
     return bounded(
       subgraph(
         state,
@@ -273,12 +323,32 @@ export class MemoryGraph {
       ),
     );
   }
+  private readable(): Promise<Snapshot> {
+    return this.store.view ? this.store.view() : this.store.load();
+  }
+  async listMemoryTeams() {
+    if (!this.store.teams)
+      throw new MemoryError(
+        "identity_required",
+        "Team lookup requires a configured user identity.",
+      );
+    return bounded(await this.store.teams());
+  }
+  async setMemoryPermissions(change: PermissionChange) {
+    if (!this.store.setPermissions)
+      throw new MemoryError(
+        "identity_required",
+        "Permission changes require a configured user identity.",
+      );
+    return bounded(await this.store.setPermissions(change));
+  }
   async semanticSearch(
     query: string,
     topK = 10,
     minScore = 0.25,
     signal?: AbortSignal,
   ) {
+    this.store.authorize?.();
     if (!this.embeddings)
       throw new MemoryError(
         "embedding_not_configured",

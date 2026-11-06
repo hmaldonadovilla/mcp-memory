@@ -39,7 +39,13 @@ describe("graph mutations and retrieval", () => {
           contents: ["Enjoys croissants", "Bakes bread", "Bakes bread"],
         },
       ]),
-    ).toEqual([{ entityName: "A", addedObservations: ["Bakes bread"] }]);
+    ).toEqual([
+      {
+        entityName: "A",
+        addedObservations: ["Bakes bread"],
+        fact_metadata: [],
+      },
+    ]);
     const before = store.state.revision;
     await graph.addObservations([
       { entityName: "A", contents: ["Bakes bread"] },
@@ -246,4 +252,20 @@ describe("graph mutations and retrieval", () => {
     expect(bounded({ ok: true })).toEqual({ ok: true });
     expect(() => snapshotSchema.parse({ schemaVersion: 2 })).toThrow();
   });
+});
+
+it("bounds the enriched write result before embedding or committing any facts", async () => {
+  const store = new TestStore(),
+    provider = new TestEmbeddings(),
+    graph = new MemoryGraph(store, provider);
+  await expect(
+    graph.createEntities([
+      person(
+        "A",
+        Array.from({ length: 40 }, (_, i) => String(i) + "x".repeat(4090)),
+      ),
+    ]),
+  ).rejects.toHaveProperty("code", "result_limit");
+  expect(provider.embed).not.toHaveBeenCalled();
+  expect(store.state.revision).toBe(0);
 });

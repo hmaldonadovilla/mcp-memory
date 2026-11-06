@@ -7,6 +7,9 @@ import {
   vectorDefinition,
   vectorRecords,
 } from "../src/vector-index.js";
+import { actor } from "../src/access.js";
+import { graphBoundary } from "../src/visibility.js";
+import { bindState, readState } from "../src/state.js";
 import { emptySnapshot } from "../src/model.js";
 import type { Snapshot } from "../src/model.js";
 const profile = "a".repeat(64);
@@ -23,10 +26,10 @@ const driver = {
 const database = {
   command: driver.command,
   collection: (name: string) =>
-    name === "memory_vectors"
+    name === "memory_index"
       ? {
           listSearchIndexes: () => ({ toArray: driver.list }),
-          replaceOne: driver.replace,
+          updateOne: driver.replace,
           deleteMany: driver.remove,
           aggregate: driver.vectors,
           createSearchIndex: driver.create,
@@ -35,44 +38,37 @@ const database = {
       : { aggregate: driver.graphs },
 } as unknown as Db;
 const session = {} as ClientSession;
-const settings = { name: "memory_semantic_v2", dimensions: 2 };
-const graph: Snapshot = {
-  ...emptySnapshot(),
-  profile,
-  revision: 1,
-  entities: [
-    {
-      name: "A",
-      entityType: "person",
-      subjects: ["caller"],
-      revision: 1,
-      vector: [0, 1],
-      facts: [
-        {
-          id: "b".repeat(64),
-          content: "Enjoys bread",
-          createdAt: "2026-01-01T00:00:00Z",
-          vector: [1, 0],
-          source: { source: "test" },
-        },
-      ],
-    },
-  ],
-};
-const publicGraph = {
-  revision: 1,
-  entities: [
-    {
-      name: "A",
-      entityType: "person",
-      subjects: ["caller"],
-      revision: 1,
-      observations: ["Enjoys bread"],
-    },
-  ],
-  relations: [],
-};
+const settings = { name: "memory_semantic_v3", dimensions: 2 };
+const graph: Snapshot = bindState(
+  {
+    ...emptySnapshot(),
+    profile,
+    revision: 1,
+    entities: [
+      {
+        name: "A",
+        entityType: "person",
+        subjects: ["caller"],
+        revision: 1,
+        vector: [0, 1],
+        facts: [
+          {
+            id: "b".repeat(64),
+            content: "Enjoys bread",
+            createdAt: "2026-01-01T00:00:00Z",
+            vector: [1, 0],
+            source: { source: "test" },
+          },
+        ],
+      },
+    ],
+  },
+  undefined,
+  actor("scope"),
+);
+const publicGraph = { _id: "scope", ...graph };
 const hit = {
+  namespace: "scope",
   kind: "fact",
   recordId: "b".repeat(64),
   entityName: "A",
@@ -90,7 +86,7 @@ beforeEach(() => {
     .mockReturnValueOnce({
       next: async () => ({ revision: 1, profile, hasEntities: true }),
     })
-    .mockReturnValue({ next: async () => publicGraph });
+    .mockReturnValue({ toArray: async () => [publicGraph] });
   driver.vectors.mockReturnValue({ toArray: async () => [hit] });
 });
 it("defines ordinary identity and cosine indexes without granting server-side provisioning", async () => {
@@ -156,7 +152,7 @@ it("uses Community's bounded native command without broadening the collection id
   await new MongoVectorIndex(database, "scope", selected).ready();
   await prepareVectorIndex(database, selected);
   expect(driver.command).toHaveBeenCalledWith({
-    listSearchIndexes: "memory_vectors",
+    listSearchIndexes: "memory_index",
     name: settings.name,
   });
   expect(driver.list).not.toHaveBeenCalled();
@@ -174,19 +170,23 @@ it("projects entities and facts with separate stable scope IDs and no unembedded
   expect(records.map((r) => r.kind)).toEqual(["entity", "fact"]);
   expect(records[1]).toMatchObject({
     namespace: "scope",
-    observation: "Enjoys bread",
     profile,
   });
   expect(records[0]?._id).not.toEqual(vectorRecords(graph, "other")[0]?._id);
   const legacy = structuredClone(graph);
   delete legacy.entities[0]!.vector;
   expect(() => vectorRecords(legacy, "scope")).toThrow();
-  expect(vectorRecords(legacy, "scope", false)).toHaveLength(1);
+  expect(vectorRecords(legacy, "scope", false)).toHaveLength(2);
   const index = new MongoVectorIndex(database, "scope", settings);
   await index.update(emptySnapshot(), graph, session);
   expect(driver.replace).toHaveBeenCalledTimes(2);
   driver.replace.mockClear();
-  await index.update(graph, structuredClone(graph), session);
+  const unchanged = structuredClone(graph);
+  for (const entity of unchanged.entities) {
+    delete entity.vector;
+    for (const fact of entity.facts) delete fact.vector;
+  }
+  await index.update(unchanged, structuredClone(unchanged), session);
   expect(driver.replace).not.toHaveBeenCalled();
   await index.update(graph, emptySnapshot(), session);
   expect(driver.remove).toHaveBeenCalledWith(
@@ -210,7 +210,9 @@ it("delegates top-k ranking to MongoDB with mandatory scope/profile/expiry prefi
     numCandidates: 100,
     limit: 5,
     filter: {
-      namespace: "scope",
+      realm: "scope",
+      tenant_id: actor("scope").tenant_id,
+      scope_ref: "scope",
       profile,
       expiresAt: { $gt: expect.any(Date) },
     },
@@ -219,12 +221,12 @@ it("delegates top-k ranking to MongoDB with mandatory scope/profile/expiry prefi
   expect(result.matches[0]).toMatchObject({
     kind: "fact",
     score: 0.9,
-    recordRef: `fact:${hit.recordId}:1`,
+    recordRef: readState(publicGraph).entities[0]!.facts[0]!.ref,
     source: { source: "test" },
   });
   expect(JSON.stringify(result)).not.toContain('"embedding"');
   expect(driver.graphs.mock.calls[1]![0][0]).toEqual({
-    $match: { _id: "scope", revision: 1 },
+    $match: { ...graphBoundary(actor("scope")), _id: { $in: ["scope"] } },
   });
 });
 it("rejects incompatible queries, profile drift, missing migration and changed graph without falling back", async () => {
@@ -249,10 +251,8 @@ it("rejects incompatible queries, profile drift, missing migration and changed g
   driver.graphs
     .mockReset()
     .mockReturnValueOnce({ next: async () => ({ revision: 1, profile }) })
-    .mockReturnValueOnce({ next: async () => null });
-  await expect(index.search([1, 0], profile, 1, 0)).rejects.toMatchObject({
-    code: "search_snapshot_changed",
-  });
+    .mockReturnValueOnce({ toArray: async () => [] });
+  expect((await index.search([1, 0], profile, 1, 0)).matches).toEqual([]);
   driver.graphs.mockReset().mockImplementation(() => {
     throw Error("private driver details");
   });
@@ -265,7 +265,7 @@ it("returns entity matches and rejects stale fact hits after authoritative hydra
     toArray: async () => [
       { ...hit, kind: "entity" },
       { ...hit, entityName: "other" },
-      { ...hit, observation: "deleted" },
+      { ...hit, recordId: "c".repeat(64) },
       { ...hit, entityRevision: 2 },
     ],
   });
@@ -306,5 +306,89 @@ it("bounds operator readiness polling and never silently rebuilds a mismatched i
     );
   } finally {
     vi.useRealTimers();
+  }
+});
+
+it("retains unchanged canonical embeddings, rejects missing vectors, and updates only metadata for ACL changes", async () => {
+  const index = new MongoVectorIndex(database, "scope", settings);
+  const noVectors = structuredClone(graph);
+  for (const entity of noVectors.entities) {
+    delete entity.vector;
+    for (const fact of entity.facts) delete fact.vector;
+  }
+  await expect(
+    index.update(emptySnapshot(), noVectors, session),
+  ).rejects.toHaveProperty("code", "reindex_required");
+  const shared = structuredClone(noVectors);
+  shared.entities[0]!.revision++;
+  shared.entities[0]!.facts[0]!.permissions!.visibility = "global";
+  driver.replace.mockResolvedValueOnce({ matchedCount: 0 });
+  await expect(index.update(noVectors, shared, session)).rejects.toHaveProperty(
+    "code",
+    "reindex_required",
+  );
+  driver.replace.mockResolvedValue({ matchedCount: 1 });
+  await index.update(noVectors, shared, session);
+  expect(driver.replace.mock.calls.at(-1)?.[1].$set).toMatchObject({
+    visibility: "global",
+  });
+  expect(driver.replace.mock.calls.at(-1)?.[1].$set).not.toHaveProperty(
+    "embedding",
+  );
+});
+it("hydrates only current authorized evidence, keeps relation endpoints bounded and preserves native score order", async () => {
+  const other = structuredClone(publicGraph);
+  other.entities.push({ ...structuredClone(graph.entities[0]!), name: "B" });
+  other.relations = [
+    { from: "A", to: "B", relationType: "knows" },
+    { from: "A", to: "C", relationType: "hidden" },
+  ];
+  const drifted = {
+    ...structuredClone(publicGraph),
+    _id: "drifted",
+    profile: "b".repeat(64),
+  };
+  const foreign = { ...structuredClone(publicGraph), _id: "foreign" };
+  driver.graphs
+    .mockReset()
+    .mockReturnValueOnce({
+      next: async () => ({ revision: 1, profile, hasEntities: true }),
+    })
+    .mockReturnValue({ toArray: async () => [other, drifted, foreign] });
+  driver.vectors.mockReturnValue({
+    toArray: async () => [
+      { ...hit, score: 0.5 },
+      { ...hit, entityName: "B", score: 0.9 },
+      { ...hit, namespace: "foreign", kind: "entity" },
+    ],
+  });
+  const result = await new MongoVectorIndex(database, "scope", settings).search(
+    [1, 0],
+    profile,
+    5,
+    0,
+  );
+  expect(result.matches.map((match) => match.score)).toEqual([0.9, 0.5]);
+  expect(result.relations).toHaveLength(1);
+  expect(result.entities).toHaveLength(2);
+});
+
+it("withholds retrieved evidence when fresh team membership changes during native hydration", async () => {
+  const directory = await import("../src/directory.js");
+  const memberships = vi
+    .spyOn(directory, "activeTeams")
+    .mockResolvedValueOnce([{ team_id: "team:1", name: "one" }])
+    .mockResolvedValueOnce([{ team_id: "team:2", name: "two" }]);
+  try {
+    await expect(
+      new MongoVectorIndex(database, "scope", settings).search(
+        [1, 0],
+        profile,
+        5,
+        0,
+      ),
+    ).rejects.toHaveProperty("code", "authorization_changed");
+  } finally {
+    memberships.mockRestore();
   }
 });

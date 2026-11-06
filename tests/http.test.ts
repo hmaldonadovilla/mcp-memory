@@ -110,7 +110,7 @@ it("serves current and framework legacy clients without sessions, shared stores 
     }),
   );
   cleanups.push(() => client.close());
-  expect((await client.listTools()).tools).toHaveLength(11);
+  expect((await client.listTools()).tools).toHaveLength(13);
   const legacy = new LegacyClient({ name: "framework-test", version: "1" });
   await legacy.connect(
     new LegacyHttpTransport(new URL(app.url + "/mcp"), {
@@ -118,7 +118,7 @@ it("serves current and framework legacy clients without sessions, shared stores 
     }),
   );
   cleanups.push(() => legacy.close());
-  expect((await legacy.listTools()).tools).toHaveLength(11);
+  expect((await legacy.listTools()).tools).toHaveLength(13);
   const result = await legacy.callTool({ name: "read_graph", arguments: {} });
   expect(result.isError).not.toBe(true);
   expect(

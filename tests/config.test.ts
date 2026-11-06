@@ -87,6 +87,8 @@ it.each([
     "invalid_mongodb_uri",
   ],
   [{ MEMORY_NAMESPACE: "$bad" }, "invalid_config"],
+  [{ MEMORY_REQUIRE_USER_CONTEXT: "true" }, "identity_required"],
+  [{ MEMORY_REQUIRE_USER_CONTEXT: "yes" }, "invalid_config"],
   [{ MEMORY_PORT: "65536" }, "invalid_config"],
   [{ MEMORY_READ_ONLY: "yes" }, "invalid_config"],
   [{ MEMORY_DATABASE: "bad/db" }, "invalid_config"],
@@ -162,4 +164,38 @@ it("accepts explicit non-default settings without adding a provider or disabling
   expect(config.port).toBe(0);
   expect(config.embedding).toBeUndefined();
   expect(config.allowedHosts).toEqual(["localhost:3001"]);
+});
+
+it("accepts only private bounded trusted-host identity files and a literal directory database", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "memory-caller-"));
+  directories.push(dir);
+  const path = join(dir, "context.json");
+  await writeFile(path, JSON.stringify({ mode: "discovery" }), { mode: 0o600 });
+  expect(
+    (
+      await loadConfig({
+        MCP_SERVER_CONFIG_FILE: path,
+        MEMORY_DIRECTORY_DATABASE: "identity",
+      })
+    ).caller,
+  ).toEqual({ mode: "discovery" });
+  await expect(
+    loadConfig({ MEMORY_DIRECTORY_DATABASE: "bad/db" }),
+  ).rejects.toHaveProperty("code", "invalid_config");
+  for (const body of [
+    "not-json",
+    " ".repeat(16385),
+    JSON.stringify({ mode: "user", user_id: "spoofed" }),
+  ]) {
+    await writeFile(path, body);
+    await expect(
+      loadConfig({ MCP_SERVER_CONFIG_FILE: path }),
+    ).rejects.toHaveProperty("code", "invalid_caller_context");
+  }
+  await expect(
+    loadConfig({ MCP_SERVER_CONFIG_FILE: dir }),
+  ).rejects.toHaveProperty("code", "invalid_caller_context");
+  await expect(
+    loadConfig({ MCP_SERVER_CONFIG_FILE: join(dir, "missing") }),
+  ).rejects.toHaveProperty("code", "invalid_caller_context");
 });
