@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { z } from "zod";
 import { MemoryError } from "./model.js";
 import type { EmbeddingOptions } from "./embeddings.js";
+import type { SearchSettings } from "./vector-index.js";
 
 export interface Config {
   uri: string;
@@ -16,6 +17,7 @@ export interface Config {
   allowedHosts: string[];
   allowedOrigins: string[];
   embedding?: EmbeddingOptions;
+  search?: SearchSettings;
 }
 async function secret(
   env: NodeJS.ProcessEnv,
@@ -137,7 +139,7 @@ export async function loadConfig(env: NodeJS.ProcessEnv): Promise<Config> {
       !profileId ||
       !Number.isInteger(dimensions) ||
       dimensions < 1 ||
-      dimensions > 16384 ||
+      dimensions > 8192 ||
       !["bearer", "api-key"].includes(authHeader) ||
       !["true", "false"].includes(sendDimensions)
     )
@@ -158,6 +160,19 @@ export async function loadConfig(env: NodeJS.ProcessEnv): Promise<Config> {
         ? { caFile: env.MEMORY_EMBEDDING_CA_FILE }
         : {}),
     };
+    const name = env.MEMORY_VECTOR_INDEX;
+    if (!name || !/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/.test(name))
+      throw new MemoryError(
+        "invalid_search_config",
+        "An explicit native MEMORY_VECTOR_INDEX is required with embeddings.",
+      );
+    const management = env.MEMORY_VECTOR_INDEX_INTERFACE ?? "aggregation";
+    if (management !== "command" && management !== "aggregation")
+      throw new MemoryError(
+        "invalid_search_config",
+        "Choose the command or aggregation native index interface.",
+      );
+    config.search = { name, dimensions, management };
   } else if (
     Object.keys(env).some((k) => k.startsWith("MEMORY_EMBEDDING_") && env[k])
   ) {
@@ -166,5 +181,13 @@ export async function loadConfig(env: NodeJS.ProcessEnv): Promise<Config> {
       "Embedding settings require an explicit endpoint; no provider is chosen implicitly.",
     );
   }
+  if (
+    (env.MEMORY_VECTOR_INDEX || env.MEMORY_VECTOR_INDEX_INTERFACE) &&
+    !baseUrl
+  )
+    throw new MemoryError(
+      "invalid_search_config",
+      "A native vector index requires its embedding profile.",
+    );
   return config;
 }

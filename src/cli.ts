@@ -12,6 +12,7 @@ import { MongoGraphStore } from "./store.js";
 const HELP = `mcp-memory ${VERSION}
 Usage: mcp-memory [--transport stdio|http] [--help] [--version]
        mcp-memory --reindex --max-facts 64
+       mcp-memory --prepare-index
 
 MongoDB: MEMORY_MONGODB_URI_FILE (or MEMORY_MONGODB_URI), MEMORY_DATABASE, MEMORY_NAMESPACE.
 HTTP: MEMORY_HTTP_TOKEN_FILE, MEMORY_HOST (127.0.0.1), MEMORY_PORT (3001).
@@ -35,6 +36,7 @@ export async function runCli(
         help: { type: "boolean" },
         version: { type: "boolean" },
         reindex: { type: "boolean" },
+        "prepare-index": { type: "boolean" },
         "max-facts": { type: "string", default: "64" },
       },
       strict: true,
@@ -65,6 +67,27 @@ export async function runCli(
       "Reindex allowance must be an integer from 1 through 10,000.",
     );
   const config = await loadConfig(env);
+  if (values["prepare-index"]) {
+    if (config.readOnly || !config.search || values.reindex)
+      throw new MemoryError(
+        "invalid_search_config",
+        "Index preparation requires a writable embedding/search configuration and a separate operator command.",
+      );
+    await MongoGraphStore.prepare(
+      config.uri,
+      config.database,
+      config.search,
+      config.caFile,
+    );
+    output(
+      JSON.stringify({
+        index: config.search.name,
+        dimensions: config.search.dimensions,
+        status: "ready",
+      }),
+    );
+    return;
+  }
   if (values.reindex && config.readOnly)
     throw new MemoryError(
       "read_only",
@@ -80,6 +103,7 @@ export async function runCli(
     config.database,
     config.namespace,
     config.caFile,
+    config.search,
   );
   let embeddings: OpenAICompatibleEmbeddings | undefined;
   try {

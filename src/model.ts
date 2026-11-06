@@ -61,6 +61,7 @@ const entitySchema = z.strictObject({
   subjects: z.array(name).max(20),
   facts: z.array(factSchema).max(200),
   revision: z.number().int().positive(),
+  vector: z.array(z.number().finite()).min(1).max(8192).optional(),
 });
 export const snapshotSchema = z.strictObject({
   schemaVersion: z.literal(1),
@@ -80,8 +81,34 @@ export type StoredEntity = Snapshot["entities"][number];
 export type Fact = StoredEntity["facts"][number];
 export interface GraphStore {
   load(): Promise<Snapshot>;
-  commit(expectedRevision: number, next: Snapshot): Promise<void>;
+  commit(
+    expectedRevision: number,
+    next: Snapshot,
+    previous?: Snapshot,
+  ): Promise<void>;
+  search?(
+    vector: number[],
+    profile: string,
+    topK: number,
+    minScore: number,
+    signal?: AbortSignal,
+  ): Promise<SemanticResult>;
   close(): Promise<void>;
+}
+export interface SemanticMatch {
+  entityName: string;
+  observation: string;
+  score: number;
+  recordRef: string;
+  kind: "entity" | "fact";
+  source?: Source;
+}
+export interface SemanticResult {
+  entities: ReturnType<typeof publicEntity>[];
+  relations: Relation[];
+  revision: number;
+  matches: SemanticMatch[];
+  embeddingProfile: string;
 }
 export interface Embeddings {
   readonly profile: string;

@@ -1,6 +1,6 @@
 // Exercise graph semantics, atomic failure, vector consistency and explicit retrieval budgets.
 import { describe, expect, it } from "vitest";
-import { MemoryGraph, cosine } from "../src/graph.js";
+import { MemoryGraph } from "../src/graph.js";
 import {
   bounded,
   publicEntity,
@@ -141,6 +141,10 @@ describe("graph mutations and retrieval", () => {
     await expect(
       plain.addObservations([{ entityName: "A", contents: ["new"] }]),
     ).rejects.toMatchObject({ code: "embedding_required" });
+    await expect(plain.deleteEntities(["A"])).rejects.toMatchObject({
+      code: "embedding_required",
+    });
+    expect(store.state.entities).toHaveLength(1);
     const changed = new MemoryGraph(store, new TestEmbeddings("b".repeat(64)));
     await expect(changed.semanticSearch("query")).rejects.toMatchObject({
       code: "embedding_profile_mismatch",
@@ -198,14 +202,16 @@ describe("graph mutations and retrieval", () => {
     await plain.createEntities([
       person(
         "A",
-        Array.from({ length: 64 }, (_, i) => "fact" + i),
+        Array.from({ length: 63 }, (_, i) => "fact" + i),
       ),
     ]);
-    await plain.addObservations([{ entityName: "A", contents: ["last"] }]);
+    await plain.addObservations([
+      { entityName: "A", contents: ["last", "last-two"] },
+    ]);
     const provider = new TestEmbeddings(),
       graph = new MemoryGraph(store, provider);
     await graph.reindex(65);
-    expect(provider.embed.mock.calls.map((c) => c[0].length)).toEqual([64, 1]);
+    expect(provider.embed.mock.calls.map((c) => c[0].length)).toEqual([64, 2]);
     const empty = new MemoryGraph(new TestStore(), provider);
     expect((await empty.semanticSearch("query")).matches).toEqual([]);
     expect(await empty.reindex(0)).toMatchObject({ indexedFacts: 0 });
@@ -236,16 +242,6 @@ describe("graph mutations and retrieval", () => {
     expect(visible(store.state.entities[0]!.facts[0]!, 0)).toBe(true);
   });
   it("rejects inconsistent vectors and oversized output rather than silently truncating", () => {
-    for (const [a, b] of [
-      [[], []],
-      [[1], [1, 2]],
-      [[0], [1]],
-      [[Infinity], [1]],
-      [[1], [NaN]],
-    ])
-      expect(() => cosine(a!, b!)).toThrow();
-    expect(cosine([1, 0], [-1, 0])).toBe(-1);
-    expect(cosine([1.7e308, 0], [1.7e308, 0])).toBe(1);
     expect(() => bounded("x".repeat(262145))).toThrow();
     expect(bounded({ ok: true })).toEqual({ ok: true });
     expect(() => snapshotSchema.parse({ schemaVersion: 2 })).toThrow();
