@@ -38,7 +38,7 @@ it("serves help/version and refuses invalid arguments before touching persistenc
   await runCli(["--help"], {}, output);
   expect(output).toHaveBeenCalledWith(expect.stringContaining("Usage:"));
   await runCli(["--version"], {}, output);
-  expect(output).toHaveBeenCalledWith("0.2.0");
+  expect(output).toHaveBeenCalledWith("0.3.0");
   for (const args of [
     ["--unknown"],
     ["--transport", "ftp"],

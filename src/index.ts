@@ -13,3 +13,6 @@ export type {
   Snapshot,
   Source,
 } from "./model.js";
+
+export { actor, callerSchema } from "./access.js";
+export type { Actor, CallerContext, PermissionChange, Team } from "./access.js";

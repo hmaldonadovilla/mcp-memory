@@ -11,6 +11,7 @@ import {
   relationSchema,
   sourceSchema,
 } from "./model.js";
+import { changePermissionsSchema } from "./access.js";
 import type { MemoryGraph } from "./graph.js";
 
 export const VERSION = z
@@ -33,6 +34,7 @@ export function createMemoryServer(
     read: boolean,
     destructive: boolean,
     operation: (input: z.output<S>, signal: AbortSignal) => Promise<unknown>,
+    idempotent = true,
   ) {
     const inputSchema: z.ZodObject = schema;
     server.registerTool(
@@ -43,7 +45,7 @@ export function createMemoryServer(
         annotations: {
           readOnlyHint: read,
           destructiveHint: destructive,
-          idempotentHint: true,
+          idempotentHint: idempotent,
           openWorldHint: false,
         },
       },
@@ -148,7 +150,24 @@ export function createMemoryServer(
     (args, signal) =>
       graph.semanticSearch(args.query, args.topK, args.minScore, signal),
   );
+  register(
+    "list_memory_teams",
+    "List your current framework-managed teams before choosing which teams may read a fact.",
+    z.strictObject({}),
+    true,
+    false,
+    () => graph.listMemoryTeams(),
+  );
   if (!readOnly) {
+    register(
+      "set_memory_permissions",
+      "Change visibility of your own facts using current fact_metadata.ref values from retrieval. User is private across your conversations, team requires selected team_ids from list_memory_teams, global shares within the tenant and authorized realm. Read current references again after any change. Never share without the user's request.",
+      changePermissionsSchema,
+      false,
+      true,
+      (args) => graph.setMemoryPermissions(args),
+      false,
+    );
     register(
       "create_entities",
       "Create entities, ignoring names that already exist. Persist facts and vectors together.",

@@ -48,12 +48,37 @@ export const relationSchema = z.strictObject({
   to: name,
   relationType: name,
 });
+const identityKey = z
+  .string()
+  .min(1)
+  .max(160)
+  .regex(/^[A-Za-z0-9_:./-]+$/);
+export const permissionsSchema = z
+  .strictObject({
+    creator_user_id: identityKey,
+    source_conversation_id: identityKey.nullable(),
+    source_task_id: identityKey.nullable(),
+    generation: z.uuid(),
+    revision: z.number().int().positive(),
+    visibility: z.enum(["user", "team", "global"]),
+    team_ids: z.array(identityKey).max(64),
+  })
+  .refine(
+    (value) =>
+      value.team_ids.length === new Set(value.team_ids).size &&
+      (value.visibility === "team"
+        ? value.team_ids.length > 0
+        : value.team_ids.length === 0),
+  );
+export type FactPermissions = z.infer<typeof permissionsSchema>;
 const factSchema = z.strictObject({
   id: z.string().regex(/^[a-f0-9]{64}$/),
   content: observation,
   createdAt: z.iso.datetime(),
   source: sourceSchema.optional(),
   vector: z.array(z.number().finite()).min(1).max(16384).optional(),
+  permissions: permissionsSchema.optional(),
+  ref: z.string().optional(),
 });
 const entitySchema = z.strictObject({
   name,
@@ -80,12 +105,20 @@ export type Snapshot = z.infer<typeof snapshotSchema>;
 export type StoredEntity = Snapshot["entities"][number];
 export type Fact = StoredEntity["facts"][number];
 export interface GraphStore {
+  authorize?(): void;
   load(): Promise<Snapshot>;
+  view?(): Promise<Snapshot>;
+  teams?(): Promise<{ team_id: string; name: string }[]>;
+  setPermissions?(change: {
+    fact_refs: string[];
+    visibility: "user" | "team" | "global";
+    team_ids: string[];
+  }): Promise<unknown>;
   commit(
     expectedRevision: number,
     next: Snapshot,
     previous?: Snapshot,
-  ): Promise<void>;
+  ): Promise<Snapshot | void>;
   search?(
     vector: number[],
     profile: string,
@@ -125,6 +158,18 @@ export const digest = (value: string): string =>
   createHash("sha256").update(value).digest("hex");
 export const factId = (entity: string, content: string): string =>
   digest(JSON.stringify([entity, content]));
+export function factRef(
+  namespace: string,
+  id: string,
+  permissions: FactPermissions,
+): string {
+  return (
+    "fact:" +
+    digest(JSON.stringify([namespace, "fact", id])) +
+    ":" +
+    digest(JSON.stringify([permissions.generation, permissions.revision]))
+  );
+}
 export function visible(fact: Fact, now = Date.now()): boolean {
   return !fact.source?.validUntil || Date.parse(fact.source.validUntil) > now;
 }
@@ -135,6 +180,20 @@ export function publicEntity(entity: StoredEntity) {
     observations: entity.facts.filter((f) => visible(f)).map((f) => f.content),
     subjects: entity.subjects,
     revision: entity.revision,
+    ...(entity.facts.some((fact) => fact.ref)
+      ? {
+          fact_metadata: entity.facts
+            .filter((fact) => visible(fact) && fact.ref && fact.permissions)
+            .map((fact) => ({
+              ref: fact.ref,
+              observation: fact.content,
+              visibility: fact.permissions!.visibility,
+              team_ids: fact.permissions!.team_ids,
+              creator_user_id: fact.permissions!.creator_user_id,
+              source_conversation_id: fact.permissions!.source_conversation_id,
+            })),
+        }
+      : {}),
   };
 }
 export function subgraph(snapshot: Snapshot, names: Set<string>) {

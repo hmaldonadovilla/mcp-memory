@@ -52,7 +52,7 @@ function environment(baseUrl: string) {
     MEMORY_EMBEDDING_MODEL: "synthetic",
     MEMORY_EMBEDDING_PROFILE: "test-v1",
     MEMORY_EMBEDDING_DIMENSIONS: "2",
-    MEMORY_VECTOR_INDEX: "memory_semantic_v2",
+    MEMORY_VECTOR_INDEX: "memory_semantic_v3",
     MEMORY_VECTOR_INDEX_INTERFACE: "command",
     MEMORY_EMBEDDING_API_KEY: "synthetic-test-key",
   };

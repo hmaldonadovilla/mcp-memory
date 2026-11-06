@@ -1,6 +1,6 @@
 {
   "name": "@hmaldonadovilla/mcp-memory",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Durable MongoDB knowledge graph and semantic retrieval over MCP stdio and Streamable HTTP",
   "license": "SEE LICENSE IN LICENSE",
   "author": "Hector Maldonado",

@@ -81,7 +81,7 @@ try {
     }),
   );
   const tools = await client.listTools();
-  if (tools.tools.length !== 11)
+  if (tools.tools.length !== 13)
     throw new Error("Packed tool discovery mismatch");
   const created = await client.callTool({
     name: "create_entities",

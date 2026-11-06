@@ -22,7 +22,7 @@ async function open(namespace = "integration-" + randomUUID()) {
     "mcp_memory_tests",
     namespace,
     undefined,
-    { name: "memory_semantic_v2", dimensions: 2, management: "command" },
+    { name: "memory_semantic_v3", dimensions: 2, management: "command" },
   );
   stores.push(store);
   return { store, namespace };
@@ -147,7 +147,7 @@ it("rolls back graph changes when a native vector projection is incompatible", a
     expect(
       await client
         .db("mcp_memory_tests")
-        .collection("memory_vectors")
+        .collection("memory_index")
         .countDocuments({ namespace }),
     ).toBe(0);
   } finally {

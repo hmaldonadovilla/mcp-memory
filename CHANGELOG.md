@@ -2,6 +2,15 @@
 
 This log records independently versioned releases of the augmented memory fork.
 
+## 0.3.0 (unreleased)
+
+- Return current fact references directly from successful writes, with the enriched output bounded before embedding or persistence.
+- Bind user identity and immutable source conversation/task provenance through a private trusted-host context; discovery has no data or embedding access.
+- Default new facts to user-private across conversations; add creator-only user/team/global sharing and fresh framework-managed multi-team authorization.
+- Keep embeddings only in `memory_index`, fact text only in `memory_graphs`; update ACL metadata without re-embedding.
+- Apply native visibility prefilters and authoritative ACL/expiry checks across every retrieval path; redact private foreign provenance, subjects and relations.
+- Require a reviewed backup/ownership migration for legacy graphs; never infer ownership or publish legacy facts globally.
+
 ## 0.2.0
 
 - Select the native Community index-discovery command without granting wider worker privileges; retain the Atlas aggregation interface.

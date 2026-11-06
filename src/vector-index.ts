@@ -1,7 +1,12 @@
 // MongoDB owns ranking and filtering; graph hydration reads only the selected public entities.
 import { z } from "zod";
 import type { ClientSession, Collection, Db, Document } from "mongodb";
-import { digest, MemoryError, sourceSchema } from "./model.js";
+import { digest, MemoryError, factRef, publicEntity } from "./model.js";
+import { actor, aclFilter } from "./access.js";
+import type { Actor } from "./access.js";
+import { activeTeams } from "./directory.js";
+import { readState } from "./state.js";
+import { graphBoundary, graphProjection } from "./visibility.js";
 import type { Snapshot, SemanticResult } from "./model.js";
 
 export interface SearchSettings {
@@ -14,11 +19,11 @@ export interface SearchSettings {
 async function indexes(db: Db, settings: SearchSettings): Promise<unknown[]> {
   if (settings.management !== "command")
     return db
-      .collection("memory_vectors")
+      .collection("memory_index")
       .listSearchIndexes(settings.name)
       .toArray();
   const result = await db.command({
-    listSearchIndexes: "memory_vectors",
+    listSearchIndexes: "memory_index",
     name: settings.name,
   });
   return z
@@ -34,39 +39,27 @@ async function indexes(db: Db, settings: SearchSettings): Promise<unknown[]> {
 interface VectorRecord {
   _id: string;
   namespace: string;
+  realm: string;
+  tenant_id: string;
+  owner_user_id: string;
+  scope_ref: string;
+  visibility: "user" | "team" | "global";
+  team_ids: string[];
   profile: string;
   kind: "entity" | "fact";
   recordId: string;
   entityName: string;
-  observation: string;
   entityRevision: number;
-  embedding: number[];
+  embedding?: number[];
   expiresAt: Date;
-  source?: z.infer<typeof sourceSchema>;
 }
 const hitSchema = z.object({
+  namespace: z.string(),
   kind: z.enum(["entity", "fact"]),
   recordId: z.string(),
   entityName: z.string(),
-  observation: z.string(),
   entityRevision: z.number().int().positive(),
   score: z.number().min(-1).max(1),
-  source: sourceSchema.optional(),
-});
-const graphSchema = z.object({
-  revision: z.number().int().nonnegative(),
-  entities: z.array(
-    z.object({
-      name: z.string(),
-      entityType: z.string(),
-      subjects: z.array(z.string()),
-      revision: z.number().int(),
-      observations: z.array(z.string()),
-    }),
-  ),
-  relations: z.array(
-    z.object({ from: z.string(), to: z.string(), relationType: z.string() }),
-  ),
 });
 export function vectorDefinition(dimensions: number) {
   if (!Number.isInteger(dimensions) || dimensions < 1 || dimensions > 8192)
@@ -82,7 +75,17 @@ export function vectorDefinition(dimensions: number) {
         numDimensions: dimensions,
         similarity: "cosine",
       },
-      ...["namespace", "profile", "expiresAt"].map((path) => ({
+      ...[
+        "namespace",
+        "realm",
+        "tenant_id",
+        "owner_user_id",
+        "scope_ref",
+        "visibility",
+        "team_ids",
+        "profile",
+        "expiresAt",
+      ].map((path) => ({
         type: "filter",
         path,
       })),
@@ -93,6 +96,7 @@ export function vectorRecords(
   state: Snapshot,
   namespace: string,
   requireComplete = true,
+  who: Actor = actor(namespace),
 ): VectorRecord[] {
   const records: VectorRecord[] = [];
   if (!state.profile) return records;
@@ -101,15 +105,14 @@ export function vectorRecords(
       {
         kind: "entity" as const,
         id: digest(JSON.stringify(["entity", entity.name])),
-        content: entity.name + " (" + entity.entityType + ")",
         vector: entity.vector,
       },
       ...entity.facts.map((fact) => ({
         kind: "fact" as const,
         id: fact.id,
-        content: fact.content,
         vector: fact.vector,
         source: fact.source,
+        permissions: fact.permissions,
       })),
     ];
     for (const value of values) {
@@ -119,7 +122,6 @@ export function vectorRecords(
             "reindex_required",
             "Every entity and fact needs a compatible embedding; run operator reindex.",
           );
-        continue;
       }
       const source = "source" in value ? value.source : undefined;
       records.push({
@@ -129,11 +131,19 @@ export function vectorRecords(
         kind: value.kind,
         recordId: value.id,
         entityName: entity.name,
-        observation: value.content,
         entityRevision: entity.revision,
-        embedding: value.vector,
+        ...(value.vector ? { embedding: value.vector } : {}),
         expiresAt: new Date(source?.validUntil ?? "9999-12-31T23:59:59Z"),
-        ...(source ? { source } : {}),
+        realm: who.realm,
+        tenant_id: who.tenant_id,
+        owner_user_id: who.user_id,
+        scope_ref: who.scope_ref,
+        visibility:
+          "permissions" in value
+            ? (value.permissions?.visibility ?? "user")
+            : "user",
+        team_ids:
+          "permissions" in value ? (value.permissions?.team_ids ?? []) : [],
       });
     }
   }
@@ -145,8 +155,10 @@ export class MongoVectorIndex {
     private readonly db: Db,
     private readonly namespace: string,
     private readonly settings: SearchSettings,
+    private readonly who: Actor = actor(namespace),
+    private readonly directory: Db = db,
   ) {
-    this.collection = db.collection<VectorRecord>("memory_vectors");
+    this.collection = db.collection<VectorRecord>("memory_index");
     vectorDefinition(settings.dimensions);
   }
   async ready(): Promise<void> {
@@ -194,25 +206,40 @@ export class MongoVectorIndex {
     session: ClientSession,
   ): Promise<void> {
     const before = new Map(
-      (previous.profile
-        ? vectorRecords(previous, this.namespace, false)
-        : []
-      ).map((record) => [record._id, record]),
+      vectorRecords(previous, this.namespace, false, this.who).map((record) => [
+        record._id,
+        record,
+      ]),
     );
-    const after = vectorRecords(next, this.namespace);
-    for (const record of after) {
+    for (const record of vectorRecords(next, this.namespace, false, this.who)) {
       const old = before.get(record._id);
-      if (JSON.stringify(old) !== JSON.stringify(record)) {
-        if (record.embedding.length !== this.settings.dimensions)
+      const { embedding, ...metadata } = record;
+      const oldMetadata = old && { ...old, embedding: undefined };
+      if (
+        embedding ||
+        JSON.stringify({ ...metadata, embedding: undefined }) !==
+          JSON.stringify(oldMetadata)
+      ) {
+        if (embedding && embedding.length !== this.settings.dimensions)
           throw new MemoryError(
             "embedding_incompatible",
             "Stored vector dimensions differ from the native index.",
           );
-        await this.collection.replaceOne(
+        if (!old && !embedding)
+          throw new MemoryError(
+            "reindex_required",
+            "New indexed records require an embedding.",
+          );
+        const result = await this.collection.updateOne(
           { _id: record._id, namespace: this.namespace },
-          record,
-          { upsert: true, session },
+          { $set: { ...metadata, ...(embedding ? { embedding } : {}) } },
+          { upsert: !!embedding, session },
         );
+        if (!embedding && result.matchedCount !== 1)
+          throw new MemoryError(
+            "reindex_required",
+            "A canonical embedding is missing; run operator reindex.",
+          );
       }
       before.delete(record._id);
     }
@@ -243,7 +270,7 @@ export class MongoVectorIndex {
       const metadata = await graphs
         .aggregate<Document>(
           [
-            { $match: { _id: this.namespace } },
+            { $match: { _id: this.namespace, ...graphBoundary(this.who) } },
             {
               $project: {
                 revision: 1,
@@ -263,13 +290,15 @@ export class MongoVectorIndex {
       if (metadata.profile && metadata.profile !== profile)
         throw new MemoryError(
           "embedding_profile_mismatch",
-          "Stored memory and query embedding profiles differ; run operator reindex.",
+          "Stored memory and query profiles differ; run operator reindex.",
         );
-      const now = new Date();
+      const teams = (await activeTeams(this.directory, this.who)).map(
+        (team) => team.team_id,
+      );
       const filter = {
-        namespace: this.namespace,
+        ...aclFilter(this.who, teams),
         profile,
-        expiresAt: { $gt: now },
+        expiresAt: { $gt: new Date() },
       };
       const rows = await this.collection
         .aggregate(
@@ -288,12 +317,11 @@ export class MongoVectorIndex {
             {
               $project: {
                 _id: 0,
+                namespace: 1,
                 kind: 1,
                 recordId: 1,
                 entityName: 1,
-                observation: 1,
                 entityRevision: 1,
-                source: 1,
                 score: {
                   $subtract: [
                     { $multiply: [{ $meta: "vectorSearchScore" }, 2] },
@@ -308,96 +336,95 @@ export class MongoVectorIndex {
         )
         .toArray();
       const hits = rows.map((row) => hitSchema.parse(row));
-      const names = [...new Set(hits.map((hit) => hit.entityName))];
-      const visibleFacts = {
-        $filter: {
-          input: "$$e.facts",
-          as: "f",
-          cond: {
-            $or: [
-              { $eq: [{ $type: "$$f.source.validUntil" }, "missing"] },
-              { $gt: ["$$f.source.validUntil", now.toISOString()] },
-            ],
+      const selectedNames = {
+        $map: {
+          input: {
+            $filter: {
+              input: { $literal: hits },
+              as: "h",
+              cond: { $eq: ["$$h.namespace", "$_id"] },
+            },
           },
+          as: "h",
+          in: "$$h.entityName",
         },
       };
-      const selectedEntities = {
-        $filter: {
-          input: "$entities",
-          as: "e",
-          cond: { $in: ["$$e.name", { $literal: names }] },
-        },
-      };
-      const result = await graphs
+      const documents = await graphs
         .aggregate(
           [
-            { $match: { _id: this.namespace, revision: metadata.revision } },
             {
-              $project: {
-                _id: 0,
-                revision: 1,
-                entities: {
-                  $map: {
-                    input: selectedEntities,
-                    as: "e",
-                    in: {
-                      name: "$$e.name",
-                      entityType: "$$e.entityType",
-                      subjects: "$$e.subjects",
-                      revision: "$$e.revision",
-                      observations: {
-                        $map: {
-                          input: visibleFacts,
-                          as: "f",
-                          in: "$$f.content",
-                        },
-                      },
-                    },
-                  },
-                },
-                relations: {
-                  $filter: {
-                    input: "$relations",
-                    as: "r",
-                    cond: {
-                      $and: [
-                        { $in: ["$$r.from", { $literal: names }] },
-                        { $in: ["$$r.to", { $literal: names }] },
-                      ],
-                    },
-                  },
-                },
+              $match: {
+                ...graphBoundary(this.who),
+                _id: { $in: [...new Set(hits.map((hit) => hit.namespace))] },
               },
             },
+            { $project: graphProjection(this.who, teams, selectedNames) },
           ],
           { maxTimeMS: 10000, signal },
         )
-        .next();
-      if (!result)
-        throw new MemoryError(
-          "search_snapshot_changed",
-          "The graph changed during retrieval; read the current state before another request.",
-        );
-      const graph = graphSchema.parse(result);
-      const matches = hits
-        .filter((hit) =>
-          graph.entities.some(
+        .toArray();
+      const matches: SemanticResult["matches"] = [];
+      const entities: SemanticResult["entities"] = [];
+      const relations: SemanticResult["relations"] = [];
+      for (const doc of documents) {
+        const { _id, ...value } = doc;
+        const namespace = z.string().parse(_id);
+        const graph = readState({ _id, ...value });
+        if (graph.profile !== profile) continue;
+        const chosen = new Set<string>();
+        for (const hit of hits.filter((hit) => hit.namespace === namespace)) {
+          const entity = graph.entities.find(
             (entity) =>
               entity.name === hit.entityName &&
-              entity.revision === hit.entityRevision &&
-              (hit.kind === "entity" ||
-                entity.observations.includes(hit.observation)),
+              entity.revision === hit.entityRevision,
+          );
+          if (!entity) continue;
+          const fact = entity.facts.find((fact) => fact.id === hit.recordId);
+          if (hit.kind === "fact" && (!fact || !fact.permissions)) continue;
+          if (hit.kind === "entity" && namespace !== this.namespace) continue;
+          chosen.add(entity.name);
+          matches.push({
+            entityName: entity.name,
+            kind: hit.kind,
+            score: hit.score,
+            observation: fact
+              ? fact.content
+              : entity.name + " (" + entity.entityType + ")",
+            recordRef: fact?.permissions
+              ? factRef(namespace, fact.id, fact.permissions)
+              : "entity:" + hit.recordId + ":" + hit.entityRevision,
+            ...(fact?.source ? { source: fact.source } : {}),
+          });
+        }
+        for (const entity of graph.entities.filter((entity) =>
+          chosen.has(entity.name),
+        )) {
+          for (const fact of entity.facts)
+            if (fact.permissions)
+              fact.ref = factRef(namespace, fact.id, fact.permissions);
+          entities.push(publicEntity(entity));
+        }
+        relations.push(
+          ...graph.relations.filter(
+            (relation) => chosen.has(relation.from) && chosen.has(relation.to),
           ),
-        )
-        .map((hit) => ({
-          entityName: hit.entityName,
-          observation: hit.observation,
-          kind: hit.kind,
-          score: hit.score,
-          recordRef: hit.kind + ":" + hit.recordId + ":" + hit.entityRevision,
-          ...(hit.source ? { source: hit.source } : {}),
-        }));
-      return { ...graph, matches, embeddingProfile: profile };
+        );
+      }
+      const current = (await activeTeams(this.directory, this.who)).map(
+        (team) => team.team_id,
+      );
+      if (JSON.stringify(teams) !== JSON.stringify(current))
+        throw new MemoryError(
+          "authorization_changed",
+          "Team memberships changed during retrieval; no result was disclosed.",
+        );
+      return {
+        entities,
+        relations,
+        revision: Number(metadata.revision),
+        matches: matches.sort((a, b) => b.score - a.score),
+        embeddingProfile: profile,
+      };
     } catch (error) {
       if (error instanceof MemoryError) throw error;
       throw new MemoryError(
@@ -413,7 +440,7 @@ export async function prepareVectorIndex(
   db: Db,
   settings: SearchSettings,
 ): Promise<void> {
-  const collection = db.collection("memory_vectors");
+  const collection = db.collection("memory_index");
   await collection.createIndex(
     { namespace: 1, kind: 1, recordId: 1 },
     { name: "memory_vector_identity", unique: true },

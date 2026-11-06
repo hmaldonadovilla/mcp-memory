@@ -47,10 +47,10 @@ async function call(
   }
   return { error: result.isError === true, data };
 }
-it("discovers all eleven tools with accurate annotations and reads the graph resource", async () => {
+it("discovers all thirteen tools with accurate annotations and reads the graph resource", async () => {
   const { client } = await connect();
   const tools = (await client.listTools()).tools;
-  expect(tools).toHaveLength(11);
+  expect(tools).toHaveLength(13);
   expect(
     tools.find((t) => t.name === "semantic_search")?.annotations,
   ).toMatchObject({
@@ -123,7 +123,7 @@ it("executes the full public graph vocabulary and semantic/subject retrieval", a
 });
 it("rejects namespace overrides and invalid input, exposes only read tools in read-only mode", async () => {
   const { client } = await connect(true);
-  expect((await client.listTools()).tools).toHaveLength(5);
+  expect((await client.listTools()).tools).toHaveLength(6);
   expect(
     (await call(client, "open_nodes", { names: [], namespace: "another-user" }))
       .error,
@@ -148,4 +148,43 @@ it("returns classified errors and never provider, database or credential details
   const failed = await call(client, "read_graph");
   expect(failed.data.code).toBe("operation_failed");
   expect(JSON.stringify(failed)).not.toContain("DO-NOT-LEAK");
+});
+
+it("exposes team lookup and guarded sharing with accurate non-idempotent annotations", async () => {
+  const { client, store } = await connect();
+  const tools = (await client.listTools()).tools;
+  expect(
+    tools.find((tool) => tool.name === "set_memory_permissions")?.annotations,
+  ).toMatchObject({
+    destructiveHint: true,
+    readOnlyHint: false,
+    idempotentHint: false,
+  });
+  expect((await call(client, "list_memory_teams")).data.code).toBe(
+    "identity_required",
+  );
+  const change = {
+    fact_refs: ["fact:" + "a".repeat(64) + ":" + "b".repeat(64)],
+    visibility: "global" as const,
+    team_ids: [],
+  };
+  expect((await call(client, "set_memory_permissions", change)).data.code).toBe(
+    "identity_required",
+  );
+  const bound = Object.assign(store, {
+    teams: async () => [{ team_id: "team:1", name: "Workgroup" }],
+    setPermissions: async () => ({ changed: 1 }),
+    view: async () => store.state,
+  });
+  const authorized = await connect(false, bound);
+  expect((await call(authorized.client, "list_memory_teams")).data).toEqual([
+    { team_id: "team:1", name: "Workgroup" },
+  ]);
+  expect(
+    (await call(authorized.client, "set_memory_permissions", change)).data
+      .changed,
+  ).toBe(1);
+  expect((await call(authorized.client, "read_graph")).data.entities).toEqual(
+    [],
+  );
 });

@@ -1,14 +1,18 @@
 // Read only documented operator configuration; secret values never enter diagnostics or tool arguments.
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { z } from "zod";
 import { MemoryError } from "./model.js";
 import type { EmbeddingOptions } from "./embeddings.js";
+import { callerSchema } from "./access.js";
+import type { CallerContext } from "./access.js";
 import type { SearchSettings } from "./vector-index.js";
 
 export interface Config {
   uri: string;
   database: string;
   namespace: string;
+  caller?: CallerContext;
+  directoryDatabase?: string;
   caFile?: string;
   readOnly: boolean;
   host: string;
@@ -127,6 +131,43 @@ export async function loadConfig(env: NodeJS.ProcessEnv): Promise<Config> {
       : {}),
     ...(token ? { token } : {}),
   };
+  if (env.MEMORY_DIRECTORY_DATABASE) {
+    if (!/^[a-zA-Z0-9_-]{1,64}$/.test(env.MEMORY_DIRECTORY_DATABASE))
+      throw new MemoryError(
+        "invalid_config",
+        "The directory database name is invalid.",
+      );
+    config.directoryDatabase = env.MEMORY_DIRECTORY_DATABASE;
+  }
+  if (env.MCP_SERVER_CONFIG_FILE) {
+    try {
+      const file = await stat(env.MCP_SERVER_CONFIG_FILE);
+      if (
+        !file.isFile() ||
+        file.size > 16384 ||
+        (process.platform !== "win32" && file.mode & 0o077)
+      )
+        throw Error("private_context_required");
+      config.caller = callerSchema.parse(
+        JSON.parse(await readFile(env.MCP_SERVER_CONFIG_FILE, "utf8")),
+      );
+    } catch {
+      throw new MemoryError(
+        "invalid_caller_context",
+        "The trusted host context must be a bounded, private identity file.",
+      );
+    }
+  }
+  if (![undefined, "true", "false"].includes(env.MEMORY_REQUIRE_USER_CONTEXT))
+    throw new MemoryError(
+      "invalid_config",
+      "Choose true or false for required user context.",
+    );
+  if (env.MEMORY_REQUIRE_USER_CONTEXT === "true" && !config.caller)
+    throw new MemoryError(
+      "identity_required",
+      "This deployment requires a trusted host identity file.",
+    );
   const baseUrl = env.MEMORY_EMBEDDING_BASE_URL;
   if (baseUrl) {
     const model = env.MEMORY_EMBEDDING_MODEL,
