@@ -6,8 +6,12 @@ import { MemoryGraph } from "../src/graph.js";
 import { MongoGraphStore } from "../src/store.js";
 import type { GraphStore } from "../src/model.js";
 import { person, TestEmbeddings } from "./helpers.js";
+import { indexed } from "./native-fixtures.js";
 const uri = process.env.MEMORY_TEST_MONGODB_URI;
-if (!uri || !/^mongodb:\/\/127\.0\.0\.1:\d+\/?$/.test(uri))
+if (
+  !uri ||
+  !/^mongodb:\/\/127\.0\.0\.1:\d+\/(?:\?directConnection=true)?$/.test(uri)
+)
   throw new Error("Use the required isolated integration runner");
 const stores: GraphStore[] = [],
   namespaces: string[] = [];
@@ -17,6 +21,8 @@ async function open(namespace = "integration-" + randomUUID()) {
     uri!,
     "mcp_memory_tests",
     namespace,
+    undefined,
+    { name: "memory_semantic_v2", dimensions: 2, management: "command" },
   );
   stores.push(store);
   return { store, namespace };
@@ -54,12 +60,23 @@ it("retains facts, vectors, provenance and relations across a new connection", a
     restored = new MemoryGraph(again.store, provider);
   expect((await restored.readGraph()).relations).toHaveLength(1);
   expect((await restored.lookupSubject("subject")).entities[0]?.name).toBe("A");
+  await indexed(uri!, first.namespace, "Enjoys croissants");
   const found = await restored.semanticSearch("pastry", 1, 0.9);
   expect(found.matches[0]).toMatchObject({
     entityName: "A",
     source: { source: "synthetic", sourceId: "original" },
   });
   expect(JSON.stringify(found)).not.toContain('"vector"');
+  const foreign = await open();
+  expect(
+    (
+      await new MemoryGraph(foreign.store, provider).semanticSearch(
+        "pastry",
+        5,
+        0.9,
+      )
+    ).matches,
+  ).toEqual([]);
   await restored.deleteObservations([
     { entityName: "A", observations: ["Enjoys croissants"] },
   ]);
@@ -84,8 +101,8 @@ it("does not lose a concurrent write or cross namespace boundaries", async () =>
     { name: "B", entityType: "test", subjects: [], revision: 1, facts: [] },
   ];
   const outcomes = await Promise.allSettled([
-    first.store.commit(0, a),
-    same.store.commit(0, b),
+    first.store.commit(0, a, { ...a, revision: 0, entities: [] }),
+    same.store.commit(0, b, { ...b, revision: 0, entities: [] }),
   ]);
   expect(outcomes.filter((o) => o.status === "fulfilled")).toHaveLength(1);
   const failure = outcomes.find((o) => o.status === "rejected");
@@ -112,4 +129,55 @@ it("does not persist a failed embedding operation or partially apply a failed re
     ]),
   ).rejects.toMatchObject({ code: "entity_missing" });
   expect((await store.load()).relations).toEqual([]);
+});
+
+it("rolls back graph changes when a native vector projection is incompatible", async () => {
+  const { store, namespace } = await open();
+  const provider = new TestEmbeddings();
+  provider.embed.mockImplementationOnce(async (inputs) =>
+    inputs.map(() => [1]),
+  );
+  await expect(
+    new MemoryGraph(store, provider).createEntities([person()]),
+  ).rejects.toMatchObject({ code: "embedding_incompatible" });
+  expect((await store.load()).revision).toBe(0);
+  const client = new MongoClient(uri);
+  try {
+    await client.connect();
+    expect(
+      await client
+        .db("mcp_memory_tests")
+        .collection("memory_vectors")
+        .countDocuments({ namespace }),
+    ).toBe(0);
+  } finally {
+    await client.close();
+  }
+});
+it("native search excludes expired facts while retaining their original graph evidence", async () => {
+  const { store, namespace } = await open();
+  const graph = new MemoryGraph(store, new TestEmbeddings());
+  await graph.createEntities([
+    {
+      ...person("Expired", ["Expired croissant fact"]),
+      source: { source: "synthetic", validUntil: "2000-01-01T00:00:00Z" },
+    },
+    person("Current", ["Current bread fact"]),
+  ]);
+  await indexed(uri!, namespace, "Current bread fact");
+  const result = await graph.semanticSearch("pastry", 10, 0.9);
+  expect(result.matches.map((m) => m.entityName)).toEqual(["Current"]);
+  expect(
+    (await store.load()).entities.find((e) => e.name === "Expired")?.facts,
+  ).toHaveLength(1);
+});
+
+it("treats entity names beginning with dollar signs as literal data during database hydration", async () => {
+  const { store, namespace } = await open();
+  const graph = new MemoryGraph(store, new TestEmbeddings());
+  await graph.createEntities([person("$Baker", ["Enjoys bread"])]);
+  await indexed(uri!, namespace, "Enjoys bread");
+  expect((await graph.semanticSearch("pastry", 1, 0.9)).entities[0]?.name).toBe(
+    "$Baker",
+  );
 });

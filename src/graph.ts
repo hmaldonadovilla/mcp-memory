@@ -32,21 +32,36 @@ export class MemoryGraph {
     const next = structuredClone(before);
     const result = bounded(operation(next));
     if (JSON.stringify(before) === JSON.stringify(next)) return result;
+    if (before.profile && !this.embeddings)
+      throw new MemoryError(
+        "embedding_required",
+        "Indexed memory mutations require the compatible embedding and native search configuration.",
+      );
+    if (before.profile) this.checkProfile(before);
     const existing = new Set(
       before.entities.flatMap((e) => e.facts.map((f) => f.id)),
     );
-    const added = next.entities
-      .flatMap((e) => e.facts)
-      .filter((f) => !existing.has(f.id));
+    const oldNames = new Set(before.entities.map((e) => e.name));
+    const added = next.entities.flatMap((entity) => [
+      ...(!oldNames.has(entity.name)
+        ? [{ target: entity, text: entityText(entity) }]
+        : []),
+      ...entity.facts
+        .filter((fact) => !existing.has(fact.id))
+        .map((fact) => ({
+          target: fact,
+          text: entityText(entity) + "\nFact: " + fact.content,
+        })),
+    ]);
     if (added.length > 64)
       throw new MemoryError(
         "embedding_budget",
-        "A mutation may introduce at most 64 facts; split the request into smaller batches.",
+        "A mutation may introduce at most 64 entity/fact vectors; split the request into smaller batches.",
       );
     if (added.length && this.embeddings) {
       this.checkProfile(before);
       const vectors = await this.embeddings.embed(
-        added.map((f) => f.content),
+        added.map((item) => item.text),
         signal,
       );
       if (vectors.length !== added.length)
@@ -54,8 +69,8 @@ export class MemoryGraph {
           "embedding_incompatible",
           "The embedding provider returned an incompatible result count.",
         );
-      added.forEach((fact, index) => {
-        fact.vector = vectors[index]!;
+      added.forEach((item, index) => {
+        item.target.vector = vectors[index]!;
       });
       next.profile = this.embeddings.profile;
     } else if (added.length && before.profile) {
@@ -71,7 +86,7 @@ export class MemoryGraph {
       );
     next.revision = before.revision + 1;
     snapshotSchema.parse(next);
-    await this.store.commit(before.revision, next);
+    await this.store.commit(before.revision, next, before);
     return result;
   }
   private checkProfile(state: Snapshot): void {
@@ -85,7 +100,7 @@ export class MemoryGraph {
         "embedding_profile_mismatch",
         "The configured embedding profile differs from stored memory; run an explicit operator reindex or use a new namespace.",
       );
-    if (state.entities.some((e) => e.facts.some((f) => !f.vector)))
+    if (state.entities.some((e) => !e.vector || e.facts.some((f) => !f.vector)))
       throw new MemoryError(
         "reindex_required",
         "Existing graph facts have not been embedded; run an explicit operator reindex first.",
@@ -264,42 +279,31 @@ export class MemoryGraph {
     minScore = 0.25,
     signal?: AbortSignal,
   ) {
-    const state = await this.store.load();
-    this.checkProfile(state);
-    if (!state.entities.some((e) => e.facts.some((f) => visible(f))))
-      return {
-        ...subgraph(state, new Set()),
-        matches: [],
-        embeddingProfile: this.embeddings!.profile,
-      };
-    const queryVector = (await this.embeddings!.embed([query], signal))[0];
+    if (!this.embeddings)
+      throw new MemoryError(
+        "embedding_not_configured",
+        "Semantic retrieval requires an explicit real embedding provider.",
+      );
+    if (!this.store.search)
+      throw new MemoryError(
+        "native_search_required",
+        "Semantic retrieval requires a ready native MongoDB Vector Search index.",
+      );
+    const queryVector = (await this.embeddings.embed([query], signal))[0];
     if (!queryVector)
       throw new MemoryError(
         "embedding_incompatible",
         "The embedding provider returned no query vector.",
       );
-    const matches = state.entities
-      .flatMap((entity) =>
-        entity.facts
-          .filter((f) => visible(f))
-          .map((fact) => ({
-            entityName: entity.name,
-            observation: fact.content,
-            score: cosine(queryVector, fact.vector!),
-            recordRef: `fact:${fact.id}:${entity.revision}`,
-            ...(fact.source ? { source: fact.source } : {}),
-          })),
-      )
-      .filter((item) => item.score >= minScore)
-      .sort(
-        (a, b) => b.score - a.score || a.recordRef.localeCompare(b.recordRef),
-      )
-      .slice(0, topK);
-    return bounded({
-      ...subgraph(state, new Set(matches.map((m) => m.entityName))),
-      matches,
-      embeddingProfile: this.embeddings!.profile,
-    });
+    return bounded(
+      await this.store.search(
+        queryVector,
+        this.embeddings.profile,
+        topK,
+        minScore,
+        signal,
+      ),
+    );
   }
   async reindex(maxFacts: number, signal?: AbortSignal) {
     if (!this.embeddings)
@@ -308,16 +312,24 @@ export class MemoryGraph {
         "Reindexing requires a real embedding provider.",
       );
     const state = await this.store.load();
+    const before = structuredClone(state);
     const facts = state.entities.flatMap((e) => e.facts);
     if (facts.length > maxFacts)
       throw new MemoryError(
         "embedding_budget",
         "Reindex fact count exceeds the explicit operator allowance.",
       );
-    for (let i = 0; i < facts.length; i += 64) {
-      const batch = facts.slice(i, i + 64);
+    const records = state.entities.flatMap((entity) => [
+      { target: entity, text: entityText(entity) },
+      ...entity.facts.map((fact) => ({
+        target: fact,
+        text: entityText(entity) + "\nFact: " + fact.content,
+      })),
+    ]);
+    for (let i = 0; i < records.length; i += 64) {
+      const batch = records.slice(i, i + 64);
       const vectors = await this.embeddings.embed(
-        batch.map((f) => f.content),
+        batch.map((item) => item.text),
         signal,
       );
       if (vectors.length !== batch.length)
@@ -325,8 +337,8 @@ export class MemoryGraph {
           "embedding_incompatible",
           "The embedding provider returned an incompatible result count.",
         );
-      batch.forEach((fact, j) => {
-        fact.vector = vectors[j]!;
+      batch.forEach((item, j) => {
+        item.target.vector = vectors[j]!;
       });
     }
     if (signal?.aborted)
@@ -338,9 +350,10 @@ export class MemoryGraph {
     state.revision++;
     state.profile = this.embeddings.profile;
     for (const entity of state.entities) entity.revision++;
-    await this.store.commit(priorRevision, state);
+    await this.store.commit(priorRevision, state, before);
     return {
       indexedFacts: facts.length,
+      indexedEntities: state.entities.length,
       revision: state.revision,
       embeddingProfile: state.profile,
     };
@@ -351,26 +364,6 @@ function sameRelation(a: Relation, b: Relation): boolean {
     a.from === b.from && a.to === b.to && a.relationType === b.relationType
   );
 }
-export function cosine(a: number[], b: number[]): number {
-  const na = Math.hypot(...a),
-    nb = Math.hypot(...b);
-  if (
-    a.length !== b.length ||
-    !a.length ||
-    !Number.isFinite(na) ||
-    !Number.isFinite(nb) ||
-    !na ||
-    !nb
-  )
-    throw new MemoryError(
-      "embedding_incompatible",
-      "Stored and query vectors must have the same dimensions and finite nonzero norms.",
-    );
-  return Math.max(
-    -1,
-    Math.min(
-      1,
-      a.reduce((sum, v, i) => sum + (v / na) * (b[i]! / nb), 0),
-    ),
-  );
+function entityText(entity: { name: string; entityType: string }): string {
+  return "Entity: " + entity.name + "\nType: " + entity.entityType;
 }

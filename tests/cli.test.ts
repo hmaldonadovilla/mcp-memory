@@ -27,6 +27,7 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 const profile = {
+  MEMORY_VECTOR_INDEX: "memory_semantic_v2",
   MEMORY_EMBEDDING_BASE_URL: "http://127.0.0.1:9/v1",
   MEMORY_EMBEDDING_MODEL: "synthetic",
   MEMORY_EMBEDDING_PROFILE: "v1",
@@ -37,7 +38,7 @@ it("serves help/version and refuses invalid arguments before touching persistenc
   await runCli(["--help"], {}, output);
   expect(output).toHaveBeenCalledWith(expect.stringContaining("Usage:"));
   await runCli(["--version"], {}, output);
-  expect(output).toHaveBeenCalledWith("0.1.0");
+  expect(output).toHaveBeenCalledWith("0.2.0");
   for (const args of [
     ["--unknown"],
     ["--transport", "ftp"],
@@ -55,6 +56,30 @@ it("serves help/version and refuses invalid arguments before touching persistenc
   await expect(runCli(["--transport", "http"], {})).rejects.toMatchObject({
     code: "http_auth_required",
   });
+});
+it("prepares indexes only as an explicit writable operator command without embedding calls", async () => {
+  const prepare = vi.spyOn(MongoGraphStore, "prepare").mockResolvedValue();
+  const output = vi.fn();
+  await runCli(["--prepare-index"], profile, output);
+  expect(prepare).toHaveBeenCalledWith(
+    "mongodb://127.0.0.1:27017",
+    "mcp_memory",
+    { name: "memory_semantic_v2", dimensions: 2, management: "aggregation" },
+    undefined,
+  );
+  expect(output).toHaveBeenCalledWith(
+    expect.stringContaining('"status":"ready"'),
+  );
+  expect(MongoGraphStore.connect).not.toHaveBeenCalled();
+  for (const [args, env] of [
+    [["--prepare-index"], {}],
+    [["--prepare-index"], { ...profile, MEMORY_READ_ONLY: "true" }],
+    [["--prepare-index", "--reindex"], profile],
+  ] as const)
+    await expect(runCli([...args], env)).rejects.toHaveProperty(
+      "code",
+      "invalid_search_config",
+    );
 });
 it("starts stdio through the negotiating SDK factory and closes data exactly once", async () => {
   const runtime = await runCli([], {});

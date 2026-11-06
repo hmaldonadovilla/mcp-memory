@@ -1,5 +1,5 @@
 # Build the same standalone package for a dedicated HTTP deployment; secrets and CAs are mounted at runtime.
-FROM node:24.19.0-bookworm-slim AS build
+FROM node:24.22.1-bookworm-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN --mount=type=secret,id=ca_bundle \
@@ -9,7 +9,7 @@ COPY tsconfig.json ./
 COPY src ./src
 RUN npm run build
 
-FROM node:24.19.0-bookworm-slim
+FROM node:24.22.1-bookworm-slim
 WORKDIR /app
 ENV NODE_ENV=production
 COPY package.json package-lock.json ./

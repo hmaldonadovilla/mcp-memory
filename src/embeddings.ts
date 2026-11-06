@@ -38,6 +38,7 @@ export class OpenAICompatibleEmbeddings implements Embeddings {
         endpoint: options.baseUrl,
         model: options.model,
         dimensions: options.dimensions,
+        inputFormat: "entity-and-fact-context-v2",
       }),
     );
     this.agent = new Agent({

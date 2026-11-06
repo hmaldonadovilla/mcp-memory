@@ -16,8 +16,12 @@ import { MemoryGraph } from "../src/graph.js";
 import { serveHttp } from "../src/http.js";
 import { MongoGraphStore } from "../src/store.js";
 import { embeddingFixture } from "./network-fixtures.js";
+import { indexed } from "./native-fixtures.js";
 const uri = process.env.MEMORY_TEST_MONGODB_URI;
-if (!uri || !/^mongodb:\/\/127\.0\.0\.1:\d+\/?$/.test(uri))
+if (
+  !uri ||
+  !/^mongodb:\/\/127\.0\.0\.1:\d+\/(?:\?directConnection=true)?$/.test(uri)
+)
   throw new Error("Use the isolated integration runner");
 const cleanup: (() => Promise<void>)[] = [],
   namespaces: string[] = [];
@@ -48,6 +52,8 @@ function environment(baseUrl: string) {
     MEMORY_EMBEDDING_MODEL: "synthetic",
     MEMORY_EMBEDDING_PROFILE: "test-v1",
     MEMORY_EMBEDDING_DIMENSIONS: "2",
+    MEMORY_VECTOR_INDEX: "memory_semantic_v2",
+    MEMORY_VECTOR_INDEX_INTERFACE: "command",
     MEMORY_EMBEDDING_API_KEY: "synthetic-test-key",
   };
 }
@@ -93,6 +99,7 @@ for (const era of ["current", "legacy"] as const)
       },
     });
     expect(created.isError).not.toBe(true);
+    await indexed(uri!, env.MEMORY_NAMESPACE, "Enjoys croissants");
     const result = await client.callTool({
       name: "semantic_search",
       arguments: { query: "pastry preferences", topK: 1 },
@@ -116,6 +123,8 @@ it("serves persisted memory over current and legacy Streamable HTTP clients", as
     config.uri,
     config.database,
     config.namespace,
+    config.caFile,
+    config.search,
   );
   cleanup.push(() => store.close());
   const provider = await OpenAICompatibleEmbeddings.create(config.embedding!);
@@ -150,6 +159,7 @@ it("serves persisted memory over current and legacy Streamable HTTP clients", as
     },
   });
   expect(added.isError).not.toBe(true);
+  await indexed(uri!, config.namespace, "Bakes bread");
   const legacy = new LegacyClient({ name: "legacy", version: "1" });
   await legacy.connect(
     new LegacyHttp(url, {

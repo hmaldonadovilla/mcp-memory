@@ -8,7 +8,10 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { MongoClient } from "mongodb";
 const uri = process.env.MEMORY_TEST_MONGODB_URI;
-if (!uri || !/^mongodb:\/\/127\.0\.0\.1:\d+\/?$/.test(uri))
+if (
+  !uri ||
+  !/^mongodb:\/\/127\.0\.0\.1:\d+\/(?:\?directConnection=true)?$/.test(uri)
+)
   throw new Error("Use the required isolated test runner");
 await mkdir(".local/package", { recursive: true });
 const packed = JSON.parse(

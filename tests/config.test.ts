@@ -10,6 +10,7 @@ afterEach(async () => {
     await rm(dir, { recursive: true, force: true });
 });
 const profile = {
+  MEMORY_VECTOR_INDEX: "memory_semantic_v2",
   MEMORY_EMBEDDING_BASE_URL: "https://provider.example/openai/v1",
   MEMORY_EMBEDDING_MODEL: "embedding",
   MEMORY_EMBEDDING_PROFILE: "model-v1",
@@ -59,6 +60,13 @@ it("has a literal graph-only default and accepts explicit mounted credentials an
     authHeader: "bearer",
     sendDimensions: false,
   });
+  expect(
+    (await loadConfig({ ...profile, MEMORY_VECTOR_INDEX_INTERFACE: "command" }))
+      .search,
+  ).toMatchObject({ management: "command" });
+  expect((await loadConfig(profile)).search).toMatchObject({
+    management: "aggregation",
+  });
 });
 it.each([
   [{ NODE_TLS_REJECT_UNAUTHORIZED: "0" }, "insecure_tls"],
@@ -91,6 +99,17 @@ it.each([
   [{ MEMORY_HTTP_TOKEN: "x".repeat(8193) }, "invalid_http_token"],
   [{ MEMORY_HTTP_TOKEN: "x".repeat(31) + " " }, "invalid_http_token"],
   [{ MEMORY_EMBEDDING_MODEL: "unbound" }, "invalid_embedding_profile"],
+  [{ ...profile, MEMORY_VECTOR_INDEX: "" }, "invalid_search_config"],
+  [{ MEMORY_VECTOR_INDEX: "unbound" }, "invalid_search_config"],
+  [{ MEMORY_VECTOR_INDEX_INTERFACE: "command" }, "invalid_search_config"],
+  [
+    { ...profile, MEMORY_VECTOR_INDEX_INTERFACE: "unrecognized" },
+    "invalid_search_config",
+  ],
+  [
+    { ...profile, MEMORY_EMBEDDING_DIMENSIONS: "8193" },
+    "invalid_embedding_profile",
+  ],
   [{ MEMORY_EMBEDDING_BASE_URL: "https://host" }, "invalid_embedding_profile"],
   [
     { ...profile, MEMORY_EMBEDDING_DIMENSIONS: "NaN" },
